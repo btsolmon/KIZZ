@@ -31,20 +31,21 @@ export async function GET(request: Request, { params }: Params) {
   }
 
   const db = getDb();
-  const teacherName = isTeacher
-    ? auth.user.name
-    : ((
-        await db
+  const [owner, [{ value: memberCount }]] = await Promise.all([
+    klass.teacherId === auth.user.id
+      ? { name: auth.user.name }
+      : db
           .select({ name: users.name })
           .from(users)
           .where(eq(users.id, klass.teacherId))
           .limit(1)
-      )[0]?.name ?? '');
-
-  const [{ value: memberCount }] = await db
-    .select({ value: count() })
-    .from(classMembers)
-    .where(eq(classMembers.classId, classId));
+          .then((rows) => rows[0]),
+    db
+      .select({ value: count() })
+      .from(classMembers)
+      .where(eq(classMembers.classId, classId)),
+  ]);
+  const teacherName = owner?.name ?? '';
 
   return NextResponse.json(toClass(klass, teacherName, {
       memberCount,
@@ -104,6 +105,18 @@ export async function PATCH(request: Request, { params }: Params) {
       );
     }
     patch.description = description;
+  }
+  if ('archived' in body) {
+    if (typeof body.archived !== 'boolean') {
+      return NextResponse.json({ error: 'Буруу хүсэлт.' }, { status: 400 });
+    }
+    if (klass.teacherId !== auth.user.id) {
+      return NextResponse.json(
+        { error: 'Зөвхөн бүлгийг үүсгэсэн хүн архивлах боломжтой.' },
+        { status: 403 },
+      );
+    }
+    patch.archivedAt = body.archived ? (klass.archivedAt ?? new Date()) : null;
   }
 
   const [row] =

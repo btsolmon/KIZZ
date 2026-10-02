@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   assignments,
@@ -40,9 +40,23 @@ export async function deleteGamesForQuizzes(tx: Tx, quizIds: string[]) {
   await tx.delete(gameSessions).where(inArray(gameSessions.id, sessionIds));
 }
 
+/** Deletes the submissions matching `where` along with the files members
+ * attached to them (those are private to the submission, never shared). */
+async function deleteSubmissions(tx: Tx, where: SQL) {
+  const files = await tx
+    .select({ materialId: submissions.materialId })
+    .from(submissions)
+    .where(and(where, isNotNull(submissions.materialId)));
+  await tx.delete(submissions).where(where);
+  const ids = files.map((f) => f.materialId!);
+  if (ids.length > 0) {
+    await tx.delete(classMaterials).where(inArray(classMaterials.id, ids));
+  }
+}
+
 export async function deleteAssignmentCascade(assignmentId: string) {
   await getDb().transaction(async (tx) => {
-    await tx.delete(submissions).where(eq(submissions.assignmentId, assignmentId));
+    await deleteSubmissions(tx, eq(submissions.assignmentId, assignmentId));
     await tx.delete(assignments).where(eq(assignments.id, assignmentId));
   });
 }
@@ -149,7 +163,7 @@ export async function deleteUserCascade(userId: string) {
     await tx.delete(classPostComments).where(eq(classPostComments.authorId, userId));
     await tx.execute(sql`update class_posts set author_id = c.teacher_id
       from classes c where class_posts.class_id = c.id and class_posts.author_id = ${userId}`);
-    await tx.delete(submissions).where(eq(submissions.studentId, userId));
+    await deleteSubmissions(tx, eq(submissions.studentId, userId));
     await tx.delete(classMembers).where(eq(classMembers.studentId, userId));
     await tx.delete(classCoTeachers).where(eq(classCoTeachers.teacherId, userId));
     await tx.delete(pointTransactions).where(eq(pointTransactions.userId, userId));

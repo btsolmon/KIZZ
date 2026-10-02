@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { GraduationCap, Plus, X } from 'lucide-react';
+import { Archive, ChevronDown, GraduationCap, Plus, X } from 'lucide-react';
 import { View } from '@/components/Shell';
 import { Button, Card, EmptyState, Field, SkeletonList, TextInput } from '@/components/ui';
 import { CopyCodeButton } from '@/components/CopyCodeButton';
@@ -22,19 +22,26 @@ function ClassCard({ user, c }: { user: User; c: Class }) {
   return (
     <Link
       href={`/classroom?classId=${c.id}`}
-      className="group flex flex-col overflow-hidden rounded-md border-[2.5px] border-ink bg-paper-raised text-inherit no-underline shadow-pop-md transition-transform duration-75 hover:-translate-x-px hover:-translate-y-px"
+      className={cx(
+        'group flex flex-col overflow-hidden rounded-md border-[2.5px] border-ink bg-paper-raised text-inherit no-underline shadow-pop-md transition-transform duration-75 hover:-translate-x-px hover:-translate-y-px',
+        c.archivedAt && 'opacity-75',
+      )}
     >
       <div
         className={cx(
           'flex items-start justify-between gap-2 px-5 py-4 text-white',
-          classBannerClass(c.color),
+          c.archivedAt ? 'bg-ink-soft' : classBannerClass(c.color),
         )}
       >
         <div className="min-w-0">
           <h3 className="truncate text-[17px] font-bold">{c.name}</h3>
           <p className="truncate text-[13px] text-white/85">{subtitle}</p>
         </div>
-        <GraduationCap size={22} className="shrink-0 text-white/70" aria-hidden />
+        {c.archivedAt ? (
+          <Archive size={22} className="shrink-0 text-white/70" aria-label="Архивлагдсан" />
+        ) : (
+          <GraduationCap size={22} className="shrink-0 text-white/70" aria-hidden />
+        )}
       </div>
       <div className="flex items-center justify-between px-5 py-3.5">
         <CopyCodeButton code={c.code} />
@@ -56,6 +63,7 @@ export default function ClassList({ user }: { user: User }) {
   const [className, setClassName] = useState('');
   const [classCode, setClassCode] = useState('');
   const [color, setColor] = useState<ClassColorKey>(randomClassColor);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     api
@@ -74,6 +82,8 @@ export default function ClassList({ user }: { user: User }) {
         : allClasses,
     [allClasses, query],
   );
+  const active = classes?.filter((c) => !c.archivedAt) ?? null;
+  const archived = classes?.filter((c) => c.archivedAt) ?? [];
 
   async function createClass() {
     if (!className.trim()) return toast('Бүлгийн нэрээ оруулна уу', 'error');
@@ -210,9 +220,9 @@ export default function ClassList({ user }: { user: User }) {
           aria-label="Бүлэг хайх"
         />
       )}
-      {classes === null ? (
+      {active === null ? (
         <SkeletonList />
-      ) : classes.length === 0 ? (
+      ) : active.length === 0 && archived.length === 0 ? (
         <>
           <h3 className="mb-2.5 text-lg">Миний бүлгүүд</h3>
           <EmptyState title="Бүлэг алга">
@@ -225,11 +235,40 @@ export default function ClassList({ user }: { user: User }) {
       ) : (
         <>
           <h3 className="mb-2.5 text-lg">Миний бүлгүүд</h3>
-          <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
-            {classes.map((c) => (
-              <ClassCard key={c.id} user={user} c={c} />
-            ))}
-          </div>
+          {active.length === 0 ? (
+            <p className="text-ink-soft">Идэвхтэй бүлэг алга.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+              {active.map((c) => (
+                <ClassCard key={c.id} user={user} c={c} />
+              ))}
+            </div>
+          )}
+
+          {archived.length > 0 && (
+            <div className="mt-8">
+              <button
+                type="button"
+                onClick={() => setShowArchived((v) => !v)}
+                aria-expanded={showArchived}
+                className="mb-2.5 inline-flex items-center gap-1.5 text-[15px] font-semibold text-ink-soft hover:text-ink"
+              >
+                <ChevronDown
+                  size={16}
+                  className={cx('transition-transform', !showArchived && '-rotate-90')}
+                  aria-hidden
+                />
+                Архивласан бүлгүүд ({archived.length})
+              </button>
+              {showArchived && (
+                <div className="grid grid-cols-2 gap-4 max-md:grid-cols-1">
+                  {archived.map((c) => (
+                    <ClassCard key={c.id} user={user} c={c} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </View>

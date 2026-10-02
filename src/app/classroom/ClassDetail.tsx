@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, LogOut, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, LogOut, Trash2 } from 'lucide-react';
 import { View } from '@/components/Shell';
 import { LoadingScreen } from '@/components/LoadingScreen';
 import { Tabs } from '@/components/Tabs';
@@ -12,6 +12,7 @@ import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/lib/confirm';
 import { ClassStream } from './ClassStream';
 import { ClassAssignments } from './ClassAssignments';
+import { ClassMaterials } from './ClassMaterials';
 import { ClassNotes } from './ClassNotes';
 import { ClassQuiz } from './ClassQuiz';
 import { ClassMarks } from './ClassMarks';
@@ -22,6 +23,7 @@ import type { ApiError, Assignment, Class, User } from '@/lib/types';
 export type TabKey =
   | 'stream'
   | 'classwork'
+  | 'materials'
   | 'notes'
   | 'quiz'
   | 'people'
@@ -30,6 +32,7 @@ export type TabKey =
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'stream', label: 'Ерөнхий' },
   { key: 'classwork', label: 'Даалгавар' },
+  { key: 'materials', label: 'Материал' },
   { key: 'notes', label: 'Тэмдэглэл' },
   { key: 'quiz', label: 'Quiz' },
   { key: 'people', label: 'Гишүүд' },
@@ -78,6 +81,7 @@ export default function ClassDetail({
   }, [classId, router, toast]);
 
   const isOwner = klass?.teacherId === user.id;
+  const archived = !!klass?.archivedAt;
 
   async function deleteGroup() {
     if (!klass) return;
@@ -88,6 +92,24 @@ export default function ClassDetail({
       router.push('/classroom');
     } catch (err) {
       toast((err as ApiError).payload?.error || 'Устгахад алдаа гарлаа', 'error');
+    }
+  }
+
+  async function setArchived(next: boolean) {
+    if (!klass) return;
+    if (
+      next &&
+      !(await confirm({
+        message: `"${klass.name}" бүлгийг архивлах уу? Жагсаалтаас нуугдаж, шинэ даалгавар, файл, зарлал нэмэх боломжгүй болно. Хүссэн үедээ буцааж болно.`,
+        confirmLabel: 'Архивлах',
+      }))
+    )
+      return;
+    try {
+      setKlass(await api.updateClass(classId, { archived: next }));
+      toast(next ? 'Бүлэг архивлагдлаа' : 'Бүлэг архиваас гарлаа');
+    } catch (err) {
+      toast((err as ApiError).payload?.error || 'Алдаа гарлаа', 'error');
     }
   }
 
@@ -114,6 +136,24 @@ export default function ClassDetail({
         <ArrowLeft size={15} /> Бүх бүлэг
       </Link>
 
+      {archived && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-amber/50 bg-amber/10 px-4 py-3">
+          <p className="flex items-center gap-2 text-[14px] text-ink">
+            <Archive size={16} className="shrink-0" aria-hidden />
+            Энэ бүлэг архивлагдсан. Шинэ даалгавар, файл, зарлал нэмэх боломжгүй.
+          </p>
+          {isOwner && (
+            <button
+              type="button"
+              onClick={() => setArchived(false)}
+              className="inline-flex items-center gap-1.5 rounded-full border-2 border-ink/20 px-3.5 py-1.5 text-[13px] font-semibold text-ink hover:border-ink"
+            >
+              <ArchiveRestore size={14} /> Архиваас гаргах
+            </button>
+          )}
+        </div>
+      )}
+
       <Tabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       <div className="mt-6">
@@ -122,7 +162,9 @@ export default function ClassDetail({
             klass={klass}
             assignments={assignments}
             isTeacher={isTeacher}
+            isOwner={isOwner}
             onEdit={() => setEditOpen(true)}
+            onCodeReset={(code) => setKlass({ ...klass, code })}
           />
         )}
 
@@ -130,9 +172,14 @@ export default function ClassDetail({
           <ClassAssignments
             classId={classId}
             isTeacher={isTeacher}
+            archived={archived}
             assignments={assignments}
             onCreated={reloadAssignments}
           />
+        )}
+
+        {activeTab === 'materials' && (
+          <ClassMaterials classId={classId} isTeacher={isTeacher} archived={archived} />
         )}
 
         {activeTab === 'notes' && (
@@ -144,19 +191,36 @@ export default function ClassDetail({
         {activeTab === 'people' && <People classId={classId} canManage={isTeacher} isOwner={isOwner} />}
 
         {activeTab === 'marks' && (
-          <ClassMarks classId={classId} assignments={assignments} isTeacher={isTeacher} />
+          <ClassMarks
+            classId={classId}
+            groupName={klass.name}
+            archived={archived}
+            assignments={assignments}
+            isTeacher={isTeacher}
+          />
         )}
       </div>
 
-      <div className="mt-10 border-t border-line pt-5">
+      <div className="mt-10 flex flex-wrap gap-3 border-t border-line pt-5">
         {isOwner ? (
-          <button
-            type="button"
-            onClick={deleteGroup}
-            className="inline-flex items-center gap-1.5 rounded-full border-2 border-coral/40 px-4 py-2 text-[13px] font-semibold text-coral transition-colors hover:bg-coral/10"
-          >
-            <Trash2 size={14} /> Бүлгийг устгах
-          </button>
+          <>
+            {!archived && (
+              <button
+                type="button"
+                onClick={() => setArchived(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border-2 border-line px-4 py-2 text-[13px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink"
+              >
+                <Archive size={14} /> Архивлах
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={deleteGroup}
+              className="inline-flex items-center gap-1.5 rounded-full border-2 border-coral/40 px-4 py-2 text-[13px] font-semibold text-coral transition-colors hover:bg-coral/10"
+            >
+              <Trash2 size={14} /> Бүлгийг устгах
+            </button>
+          </>
         ) : (
           <button
             type="button"

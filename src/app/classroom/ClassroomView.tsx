@@ -11,6 +11,7 @@ import ClassDetail, { type TabKey } from './ClassDetail';
 const TAB_PARAMS: TabKey[] = [
   'stream',
   'classwork',
+  'materials',
   'notes',
   'quiz',
   'people',

@@ -134,6 +134,20 @@
       "when": 1790783715424,
       "tag": "0018_community_features",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790825618497,
+      "tag": "0019_classroom_additions",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790910931530,
+      "tag": "0020_add_indexes",
+      "breakpoints": true
     }
   ]
 }

@@ -13,7 +13,11 @@ import { BADGES, BADGE_BY_KEY } from '@/lib/badges';
 import { normalizeMime } from '@/lib/materials';
 import { matchesSignature } from '@/lib/fileSignature';
 import { rateLimit, resetRateLimits } from '@/lib/rateLimit';
-import { optionalText } from '@/lib/text';
+import { formatSize, optionalText } from '@/lib/text';
+import { dueDateInput, dueInputValue, dueTimeInput, formatDue, parseDueInput } from '@/lib/dueDate';
+import { gradesCsv, safeFileName } from '@/lib/gradesCsv';
+import { checkAnswers, withoutAnswers } from '@/lib/quiz/answers';
+import type { Question, Quiz } from '@/lib/types';
 import { randomCode } from '@/lib/codes';
 
 describe('levelForXp', () => {
@@ -124,5 +128,101 @@ describe('badge catalogue', () => {
     for (const key of ['first_note', 'first_quiz', 'team_player', 'first_win', 'perfect_score', 'streak_7', 'streak_30', 'level_5', 'level_10', 'popular_author']) {
       expect(BADGE_BY_KEY.has(key)).toBe(true);
     }
+  });
+});
+
+describe('due dates', () => {
+  it('a date alone means the end of that day in Ulaanbaatar', () => {
+    const due = parseDueInput(dueInputValue('2026-10-05', ''))!;
+    expect(due.toISOString()).toBe('2026-10-05T15:59:59.000Z');
+    expect(dueDateInput(due.toISOString())).toBe('2026-10-05');
+    expect(dueTimeInput(due.toISOString())).toBe('');
+  });
+  it('a date and time round-trip through the inputs', () => {
+    const due = parseDueInput(dueInputValue('2026-10-05', '18:30'))!;
+    expect(due.toISOString()).toBe('2026-10-05T10:30:00.000Z');
+    expect(dueDateInput(due.toISOString())).toBe('2026-10-05');
+    expect(dueTimeInput(due.toISOString())).toBe('18:30');
+  });
+  it('no date means no deadline, even with a time', () => {
+    expect(dueInputValue('', '18:30')).toBeNull();
+    expect(parseDueInput(null)).toBeNull();
+    expect(parseDueInput('not a date')).toBeUndefined();
+  });
+  it('the label shows a time only when one was picked', () => {
+    expect(formatDue(new Date('2026-10-05T23:59:59+08:00'))).not.toContain(':');
+    expect(formatDue(new Date('2026-10-05T18:00:00+08:00'))).toEndWith(', 18:00');
+  });
+});
+
+describe('formatSize', () => {
+  it('picks a readable unit', () => {
+    expect(formatSize(812)).toBe('812 B');
+    expect(formatSize(45 * 1024)).toBe('45 KB');
+    expect(formatSize(1.25 * 1024 * 1024)).toBe('1.3 MB');
+  });
+});
+
+describe('gradesCsv', () => {
+  const grades = {
+    assignments: [
+      { id: 'a1', title: 'HW, part 1', dueAt: null },
+      { id: 'a2', title: 'Essay', dueAt: null },
+    ],
+    students: [
+      {
+        id: 's1',
+        name: 'Болд',
+        cells: { a1: { score: 90, submittedAt: '', late: false }, a2: { score: null, submittedAt: '', late: true } },
+        average: 90,
+      },
+      { id: 's2', name: '=HYPERLINK("x")', cells: { a1: null, a2: null }, average: null },
+    ],
+  };
+  const csv = gradesCsv(grades);
+  const lines = csv.slice(1).trimEnd().split('\r\n');
+  it('starts with a BOM so Excel reads UTF-8', () => {
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+  });
+  it('quotes cells with commas and lists scores, ungraded and missing work', () => {
+    expect(lines[0]).toBe('Гишүүн,"HW, part 1",Essay,Дундаж');
+    expect(lines[1]).toBe('Болд,90,илгээсэн,90');
+  });
+  it('defuses names Excel would run as a formula', () => {
+    expect(lines[2]).toBe(`"'=HYPERLINK(""x"")",,,`);
+  });
+  it('makes a safe file name', () => {
+    expect(safeFileName('8/А анги: дүн?')).toBe('8-А анги- дүн-');
+    expect(safeFileName('  ')).toBe('file');
+  });
+});
+
+describe('quiz answer key', () => {
+  const questions: Question[] = [
+    { id: 'q1', prompt: '1+1?', options: ['1', '2', '3', '4'], correctIndex: 1, explanation: 'Two.' },
+    { id: 'q2', prompt: '2+2?', options: ['4', '5', '6', '7'], correctIndex: 0 },
+  ];
+  it('withoutAnswers drops the key and explanations', () => {
+    const quiz = { id: 'z', title: 'T', questions } as unknown as Quiz;
+    const hidden = withoutAnswers(quiz);
+    expect(hidden.answersHidden).toBe(true);
+    expect(hidden.questions[0]).toEqual({ id: 'q1', prompt: '1+1?', options: ['1', '2', '3', '4'] });
+    expect(JSON.stringify(hidden)).not.toContain('correctIndex');
+    expect(JSON.stringify(hidden)).not.toContain('Two.');
+  });
+  it('checkAnswers says what was right, and reveals the key only when allowed', () => {
+    const picks = [
+      { questionId: 'q1', optionIndex: 1 },
+      { questionId: 'q2', optionIndex: 3 },
+      { questionId: 'nope', optionIndex: 0 },
+    ];
+    expect(checkAnswers(questions, picks, false)).toEqual([
+      { questionId: 'q1', correct: true },
+      { questionId: 'q2', correct: false },
+    ]);
+    expect(checkAnswers(questions, picks, true)).toEqual([
+      { questionId: 'q1', correct: true, correctIndex: 1, explanation: 'Two.' },
+      { questionId: 'q2', correct: false, correctIndex: 0, explanation: undefined },
+    ]);
   });
 });

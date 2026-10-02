@@ -24,6 +24,7 @@ import type {
   PurchaseResult,
   Question,
   Quiz,
+  QuizCheckResult,
   ShopItem,
   StreakStatus,
   Submission,
@@ -183,9 +184,11 @@ export const api = {
       `/library?sort=${sort}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
     ),
   copyLibraryQuiz: (quizId: string) => request<Quiz>('POST', `/library/${quizId}/copy`),
-  listPosts: (classId: string) => request<ClassPost[]>('GET', `/classes/${classId}/posts`),
-  createPost: (classId: string, body: string) =>
-    request<ClassPost[]>('POST', `/classes/${classId}/posts`, { body }),
+  /** Pinned announcements plus the `limit` newest others. */
+  listPosts: (classId: string, limit: number) =>
+    request<ClassPost[]>('GET', `/classes/${classId}/posts?limit=${limit}`),
+  createPost: (classId: string, body: string, file?: File | null) =>
+    postForm<ClassPost[]>(`/classes/${classId}/posts`, { body }, file),
   pinPost: (postId: string, pinned: boolean) =>
     request('PATCH', `/posts/${postId}`, { pinned }),
   deletePost: (postId: string) => request('DELETE', `/posts/${postId}`),
@@ -193,6 +196,9 @@ export const api = {
     request('POST', `/posts/${postId}/comments`, { body }),
   deleteComment: (commentId: string) => request('DELETE', `/comments/${commentId}`),
   getQuiz: (quizId: string) => request<Quiz>('GET', `/quizzes/${quizId}`),
+  /** Practice on a quiz whose answers are hidden from the caller. */
+  checkQuiz: (quizId: string, answers: { questionId: string; optionIndex: number | null }[]) =>
+    request<{ results: QuizCheckResult[] }>('POST', `/quizzes/${quizId}/check`, { answers }),
 
   // live game — polling-based (no WebSocket/pub-sub service is configured
   // anywhere in this repo). Poll getGameState every ~1.5s while on the play
@@ -231,8 +237,12 @@ export const api = {
       name: string;
       color: string;
       description: string | null;
+      /** Owner only. */
+      archived: boolean;
     }>,
   ) => request<Class>('PATCH', `/classes/${id}`, patch),
+  resetClassCode: (id: string) =>
+    request<{ code: string }>('POST', `/classes/${id}/code`),
   // Teachers can also join another teacher's class by code, as a
   // full co-teacher — same call, the backend branches on role.
   joinClass: (code: string) => request<Class>('POST', '/classes/join', { code }),
@@ -267,7 +277,7 @@ export const api = {
     request('DELETE', `/note-attachments/${attachmentId}`),
   updateAssignment: (
     assignmentId: string,
-    patch: { title?: string; dueAt?: string | null },
+    patch: { title?: string; description?: string | null; dueAt?: string | null },
   ) => request<Assignment>('PATCH', `/assignments/${assignmentId}`, patch),
   getGrades: (classId: string) =>
     request<ClassGrades>('GET', `/classes/${classId}/grades`),
@@ -282,6 +292,7 @@ export const api = {
     classId: string,
     payload: {
       title: string;
+      description?: string;
       dueAt: string | null;
       /** Optional — an assignment can have no quiz (plain instructional
        * item, no auto-grading). */
@@ -294,16 +305,31 @@ export const api = {
       `/classes/${classId}/assignments`,
       {
         title: payload.title,
+        description: payload.description,
         dueAt: payload.dueAt ?? undefined,
         quizId: payload.quizId,
       },
       payload.file,
     ),
   getAssignment: (id: string) => request<AssignmentDetail>('GET', `/assignments/${id}`),
-  submitAssignment: (id: string, payload: { answers: (number | null)[] }) =>
-    request<SubmitResult>('POST', `/assignments/${id}/submit`, payload),
+  submitAssignment: (
+    id: string,
+    payload: {
+      answers: (number | null)[];
+      /** Optional — the member's own work. Replaces one sent earlier. */
+      file?: File | null;
+    },
+  ) =>
+    postForm<SubmitResult>(
+      `/assignments/${id}/submit`,
+      { answers: JSON.stringify(payload.answers) },
+      payload.file,
+    ),
   listSubmissions: (assignmentId: string) =>
     request<Submission[]>('GET', `/assignments/${assignmentId}/submissions`),
+  /** Nudges members who haven't handed it in (once a day per member). */
+  remindAssignment: (assignmentId: string) =>
+    request<{ reminded: number; missing: number }>('POST', `/assignments/${assignmentId}/remind`),
   gradeSubmission: (submissionId: string, score: number) =>
     request<Submission>('PATCH', `/submissions/${submissionId}`, { score }),
 

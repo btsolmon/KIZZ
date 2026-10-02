@@ -31,6 +31,7 @@ export const materialColumns = {
   fileName: classMaterials.fileName,
   mimeType: classMaterials.mimeType,
   sizeBytes: classMaterials.sizeBytes,
+  isSubmission: classMaterials.isSubmission,
   createdAt: classMaterials.createdAt,
 };
 
@@ -69,13 +70,15 @@ export function validateMaterialFile(
 }
 
 /** Stores an already-validated file as a class material and returns the row
- * (without file bytes — same shape as `materialColumns`). */
+ * (without file bytes — same shape as `materialColumns`). `isSubmission`
+ * marks a member's own work, which stays out of the shared materials list. */
 export async function insertMaterial(params: {
   classId: string;
   uploadedBy: string;
   file: File;
+  isSubmission?: boolean;
 }) {
-  const { classId, uploadedBy, file } = params;
+  const { classId, uploadedBy, file, isSubmission = false } = params;
   const buffer = Buffer.from(await file.arrayBuffer());
   const [row] = await getDb()
     .insert(classMaterials)
@@ -86,6 +89,7 @@ export async function insertMaterial(params: {
       mimeType: normalizeMime(file.type),
       sizeBytes: file.size,
       data: buffer.toString('base64'),
+      isSubmission,
     })
     .returning(materialColumns);
   return row;

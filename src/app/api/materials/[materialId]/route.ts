@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { classMaterials } from '@/db/schema';
+import { assignments, classMaterials, classPosts } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
 import { getClassMembership } from '@/lib/access';
 import { isUuid } from '@/lib/uuid';
@@ -33,11 +33,15 @@ export async function GET(request: Request, { params }: Params) {
     return NextResponse.json({ error: 'Файл олдсонгүй.' }, { status: 404 });
   }
 
-  const { isMember } = await getClassMembership(
+  const { isMember, isTeacher } = await getClassMembership(
     material.classId,
     auth.user.id,
   );
-  if (!isMember) {
+  // A member's submitted work is only for them and the group's admins.
+  const allowed = material.isSubmission
+    ? isTeacher || material.uploadedBy === auth.user.id
+    : isMember;
+  if (!allowed) {
     return NextResponse.json({ error: 'Файл олдсонгүй.' }, { status: 404 });
   }
 
@@ -60,7 +64,11 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   const [material] = await getDb()
-    .select({ id: classMaterials.id, classId: classMaterials.classId })
+    .select({
+      id: classMaterials.id,
+      classId: classMaterials.classId,
+      isSubmission: classMaterials.isSubmission,
+    })
     .from(classMaterials)
     .where(eq(classMaterials.id, materialId))
     .limit(1);
@@ -79,6 +87,25 @@ export async function DELETE(request: Request, { params }: Params) {
     );
   }
 
-  await getDb().delete(classMaterials).where(eq(classMaterials.id, materialId));
+  if (material.isSubmission) {
+    return NextResponse.json(
+      { error: 'Гишүүний илгээсэн файлыг устгах боломжгүй.' },
+      { status: 403 },
+    );
+  }
+
+  // A shared file may also be attached to assignments or announcements;
+  // they simply lose the attachment.
+  await getDb().transaction(async (tx) => {
+    await tx
+      .update(assignments)
+      .set({ materialId: null })
+      .where(eq(assignments.materialId, materialId));
+    await tx
+      .update(classPosts)
+      .set({ materialId: null })
+      .where(eq(classPosts.materialId, materialId));
+    await tx.delete(classMaterials).where(eq(classMaterials.id, materialId));
+  });
   return NextResponse.json({ ok: true });
 }

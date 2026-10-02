@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { LeaderboardList } from '@/components/LeaderboardList';
 import { LoadingScreen } from '@/components/LoadingScreen';
 import { Shell, View } from '@/components/Shell';
@@ -11,9 +12,25 @@ import { cx } from '@/lib/cx';
 import type { Class, LeaderboardResponse } from '@/lib/types';
 
 export default function LeaderboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <Shell activePath="">
+          <LoadingScreen />
+        </Shell>
+      }
+    >
+      <Leaderboard />
+    </Suspense>
+  );
+}
+
+function Leaderboard() {
   const { user, ready } = useAuth();
+  const searchParams = useSearchParams();
   const [classes, setClasses] = useState<Class[]>([]);
-  const [scope, setScope] = useState<string>('global'); // 'global' or a class id
+  // 'global' or a class id; `?group=<id>` opens straight on that group.
+  const [scope, setScope] = useState<string>(() => searchParams.get('group') || 'global');
   const [data, setData] = useState<LeaderboardResponse | null>(null);
 
   useEffect(() => {

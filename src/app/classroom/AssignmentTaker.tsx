@@ -1,59 +1,148 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
 import { AttachmentLink } from '@/components/AttachmentLink';
+import { FilePicker } from '@/components/FilePicker';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { dueInfo } from '@/lib/dueDate';
 import { refreshNotifications } from '@/lib/events';
 import type { ApiError, AssignmentDetail, SubmitResult } from '@/lib/types';
+import { QuizReview } from './QuizReview';
 
-export function AssignmentTaker({ assignmentId }: { assignmentId: string }) {
+export function AssignmentTaker({
+  assignmentId,
+  archived,
+  onSubmitted,
+}: {
+  assignmentId: string;
+  archived: boolean;
+  /** Called after a successful submission so the list can refresh. */
+  onSubmitted: () => void;
+}) {
   const toast = useToast();
   const [assignment, setAssignment] = useState<AssignmentDetail | null>(null);
   const [answers, setAnswers] = useState<(number | null)[]>([]);
+  const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [retaking, setRetaking] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    const a = await api.getAssignment(assignmentId);
+    setAssignment(a);
+    setAnswers(new Array(a.quiz?.questions.length ?? 0).fill(null));
+  }, [assignmentId]);
 
   useEffect(() => {
-    api.getAssignment(assignmentId).then((a) => {
-      setAssignment(a);
-      setAnswers(new Array(a.quiz?.questions.length ?? 0).fill(null));
-    });
-  }, [assignmentId]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load().catch((err: ApiError) =>
+      toast(err.payload?.error || 'Даалгаврыг ачаалж чадсангүй', 'error'),
+    );
+  }, [load, toast]);
 
   if (!assignment) return null;
 
   const { overdue } = dueInfo(assignment.dueAt);
+  const submission = assignment.mySubmission;
 
-  if (assignment.mySubmission && !retaking) {
+  const instructions = (
+    <>
+      {assignment.description && (
+        <p className="whitespace-pre-line break-words rounded-xl bg-paper p-3 text-[15px] leading-relaxed text-ink">
+          {assignment.description}
+        </p>
+      )}
+      {assignment.materialId && <AttachmentLink materialId={assignment.materialId} />}
+    </>
+  );
+
+  async function submit() {
+    setSubmitting(true);
+    try {
+      const r = await api.submitAssignment(assignmentId, { answers, file });
+      setResult(r);
+      setFile(null);
+      setRetaking(false);
+      if (r.reward) refreshNotifications();
+      await load();
+      onSubmitted();
+    } catch (err) {
+      toast(
+        (err as ApiError).payload?.error || 'Илгээхэд алдаа гарлаа',
+        'error',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (submission && !retaking) {
     return (
-      <>
-        <p className="font-bold text-violet">
-          {assignment.mySubmission.score === null
-            ? 'Та энэ даалгаврыг илгээсэн байна. Админ дүн оруулахыг хүлээж байна.'
-            : `Та энэ даалгаврыг ${assignment.mySubmission.score}% дүнтэй дуусгасан байна.`}
-        </p>
-        <p className="text-[13px] text-ink-soft">
-          Илгээсэн:{' '}
-          {new Date(assignment.mySubmission.submittedAt).toLocaleString()}
-        </p>
-        {assignment.materialId && (
-          <div className="mt-2">
-            <AttachmentLink materialId={assignment.materialId} />
-          </div>
+      <div className="flex flex-col gap-3">
+        {instructions}
+        <div>
+          <p className="font-bold text-violet">
+            {submission.score === null
+              ? 'Та энэ даалгаврыг илгээсэн байна. Админ дүн оруулахыг хүлээж байна.'
+              : `Таны дүн: ${submission.score}%`}
+            {result?.reward && (
+              <span className="ml-2 text-mint">
+                +{result.reward.xp} XP
+                {result.reward.coins > 0 && `, +${result.reward.coins} coin`}
+              </span>
+            )}
+          </p>
+          <p className="text-[13px] text-ink-soft">
+            Илгээсэн: {new Date(submission.submittedAt).toLocaleString()}
+          </p>
+        </div>
+        {submission.materialId && (
+          <AttachmentLink materialId={submission.materialId} label="Миний илгээсэн файл" />
         )}
-        {overdue ? (
-          <p className="mt-2 text-[13px] text-ink-soft">
+
+        {assignment.quiz && (
+          <details open={!!result}>
+            <summary className="cursor-pointer text-[14px] font-semibold text-ink-soft hover:text-ink">
+              Хариултаа харах
+            </summary>
+            <div className="mt-3">
+              <QuizReview
+                questions={assignment.quiz.questions}
+                answers={submission.answers}
+                correct={assignment.myCorrect}
+              />
+              {assignment.quiz.answersHidden && (
+                <p className="mt-2 text-[13px] text-ink-soft">
+                  {overdue
+                    ? 'Энэ quiz өөр нээлттэй даалгаварт ашиглагдаж байгаа тул зөв хариултууд одоохондоо харагдахгүй.'
+                    : assignment.dueAt
+                      ? 'Зөв хариултууд хугацаа дууссаны дараа харагдана. Түүнээс өмнө алдсан асуултаа засаад дахин илгээж болно.'
+                      : 'Алдсан асуултаа засаад дахин илгээж болно.'}
+                </p>
+              )}
+            </div>
+          </details>
+        )}
+
+        {archived ? (
+          <p className="text-[13px] text-ink-soft">
+            Бүлэг архивлагдсан тул дахин илгээх боломжгүй.
+          </p>
+        ) : overdue ? (
+          <p className="text-[13px] text-ink-soft">
             Хугацаа дууссан тул дахин илгээх боломжгүй.
           </p>
         ) : (
           <Button
             variant="ghost"
-            className="mt-3 self-start"
+            className="self-start"
             onClick={() => {
-              setAnswers(new Array(assignment.quiz?.questions.length ?? 0).fill(null));
+              // Start from the previous answers so only the misses need fixing.
+              setAnswers(
+                assignment.quiz?.questions.map((_, i) => submission.answers[i] ?? null) ?? [],
+              );
               setResult(null);
               setRetaking(true);
             }}
@@ -61,44 +150,53 @@ export function AssignmentTaker({ assignmentId }: { assignmentId: string }) {
             Дахин илгээх
           </Button>
         )}
-      </>
+      </div>
     );
   }
 
-  async function submit() {
-    try {
-      const r = await api.submitAssignment(assignmentId, { answers });
-      setResult(r);
-      if (r.reward) refreshNotifications();
-    } catch (err) {
-      toast(
-        (err as ApiError).payload?.error || 'Илгээхэд алдаа гарлаа',
-        'error',
-      );
-    }
+  if (archived) {
+    return (
+      <div className="flex flex-col gap-3">
+        {instructions}
+        <p className="text-[13px] text-ink-soft">
+          Бүлэг архивлагдсан тул илгээх боломжгүй.
+        </p>
+      </div>
+    );
   }
+
+  const filePicker = (
+    <FilePicker
+      file={file}
+      onChange={setFile}
+      label={submission?.materialId ? 'Өөр файл хавсаргах' : 'Файл хавсаргах (заавал биш)'}
+    />
+  );
 
   if (!assignment.quiz) {
     // No quiz attached — a plain instructional item. Nothing to answer,
-    // just an optional attachment and a "mark as done" action.
+    // just the member's optional file and a "mark as done" action.
     return (
       <div className="flex flex-col gap-3">
-        {assignment.materialId && <AttachmentLink materialId={assignment.materialId} />}
-        <Button variant="primary" onClick={submit} className="self-start">
-          Дуусгасан гэж тэмдэглэх
-        </Button>
-        {result && (
-          <p className="mt-1 font-bold text-violet">
-            Илгээгдлээ. Админ дүн оруулахыг хүлээж байна.
-          </p>
-        )}
+        {instructions}
+        {filePicker}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" onClick={submit} disabled={submitting} className="self-start">
+            {submitting ? 'Илгээж байна...' : file ? 'Илгээх' : 'Дуусгасан гэж тэмдэглэх'}
+          </Button>
+          {retaking && (
+            <Button variant="ghost" onClick={() => setRetaking(false)}>
+              Болих
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
-      {assignment.materialId && <AttachmentLink materialId={assignment.materialId} />}
+      {instructions}
       {assignment.quiz.questions.map((q, qi) => (
         <div key={q.id} className="rounded-xl border border-line p-3">
           <p className="mb-2 font-semibold">
@@ -112,7 +210,7 @@ export function AssignmentTaker({ assignmentId }: { assignmentId: string }) {
               >
                 <input
                   type="radio"
-                  name={`q${qi}`}
+                  name={`${assignmentId}-q${qi}`}
                   checked={answers[qi] === oi}
                   onChange={() =>
                     setAnswers((prev) =>
@@ -126,27 +224,23 @@ export function AssignmentTaker({ assignmentId }: { assignmentId: string }) {
           </div>
         </div>
       ))}
-      <div className="flex items-center justify-between gap-3">
+      {filePicker}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-ink-soft">
           {answers.filter((a) => a !== null).length} / {answers.length}{' '}
           асуулт бөглөсөн
         </p>
-        <Button variant="primary" onClick={submit}>
-          Илгээх
-        </Button>
-      </div>
-      {result && (
-        <p className="mt-3 font-bold text-violet">
-          Дүн: {result.score}% ({result.correctCount}/{result.totalQuestions}{' '}
-          зөв)
-          {result.reward && (
-            <span className="ml-2 text-mint">
-              +{result.reward.xp} XP
-              {result.reward.coins > 0 && `, +${result.reward.coins} coin`}
-            </span>
+        <div className="flex gap-2">
+          {retaking && (
+            <Button variant="ghost" onClick={() => setRetaking(false)}>
+              Болих
+            </Button>
           )}
-        </p>
-      )}
+          <Button variant="primary" onClick={submit} disabled={submitting}>
+            {submitting ? 'Илгээж байна...' : 'Илгээх'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

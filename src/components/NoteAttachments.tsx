@@ -3,15 +3,11 @@
 import { useEffect, useId, useState } from 'react';
 import { FileText, Image as ImageIcon, Loader2, UploadCloud, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import { saveBlob } from '@/lib/download';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/lib/confirm';
+import { formatSize } from '@/lib/text';
 import type { ApiError, NoteAttachment } from '@/lib/types';
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** Files attached to a note. Uploads immediately (no draft state) and lists
  * what's stored; auth is a bearer token so downloads go through fetch+Blob. */
@@ -57,14 +53,7 @@ export function NoteAttachments({ noteId }: { noteId: string }) {
   async function download(item: NoteAttachment) {
     try {
       const { blob, fileName } = await api.downloadNoteAttachment(item.id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      saveBlob(blob, fileName);
     } catch {
       toast('Татахад алдаа гарлаа', 'error');
     }

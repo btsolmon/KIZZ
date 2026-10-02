@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { classMaterials } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
-import { getClassMembership } from '@/lib/access';
+import { archivedGuard, getClassMembership } from '@/lib/access';
 import { classStudentIds, notifyUsers } from '@/lib/notifications';
 import { fileHasValidSignature } from '@/lib/fileSignature';
 import { rateLimit } from '@/lib/rateLimit';
@@ -33,7 +33,8 @@ export async function GET(request: Request, { params }: Params) {
   const rows = await getDb()
     .select(materialColumns)
     .from(classMaterials)
-    .where(eq(classMaterials.classId, classId))
+    // Members' own submitted work is private to them and the admins.
+    .where(and(eq(classMaterials.classId, classId), eq(classMaterials.isSubmission, false)))
     .orderBy(desc(classMaterials.createdAt));
 
   return NextResponse.json(rows.map(toMaterial));
@@ -57,6 +58,8 @@ export async function POST(request: Request, { params }: Params) {
       { status: 403 },
     );
   }
+  const archived = archivedGuard(klass);
+  if (archived) return archived;
 
   const formData = await request.formData().catch(() => null);
   const file = formData?.get('file');

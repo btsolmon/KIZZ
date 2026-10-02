@@ -4,36 +4,39 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Button, Card, EmptyState, Field, TextInput } from '@/components/ui';
 import { AttachmentLink } from '@/components/AttachmentLink';
-import { useAppState } from '@/lib/appState';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/lib/confirm';
-import { dueInfo } from '@/lib/dueDate';
+import { dueInfo, dueInputValue } from '@/lib/dueDate';
 import { cx } from '@/lib/cx';
 import { AssignmentTaker } from './AssignmentTaker';
-import { EditAssignmentDialog } from './EditAssignmentDialog';
+import { EditAssignmentDialog, dateTimeInputClass } from './EditAssignmentDialog';
 import type { ApiError, Assignment, Quiz } from '@/lib/types';
 
 const NO_QUIZ = '';
+const MAX_DESCRIPTION = 2000;
 
 export function ClassAssignments({
   classId,
   isTeacher,
+  archived,
   assignments,
   onCreated,
 }: {
   classId: string;
   isTeacher: boolean;
+  archived: boolean;
   assignments: Assignment[];
   onCreated: () => void;
 }) {
   const toast = useToast();
   const confirm = useConfirm();
-  const [group] = useAppState('group');
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [quizId, setQuizId] = useState(NO_QUIZ);
   const [title, setTitle] = useState('');
-  const [dueAt, setDueAt] = useState('');
+  const [description, setDescription] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [dueTime, setDueTime] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -41,14 +44,15 @@ export function ClassAssignments({
     string | null
   >(null);
 
+  // Only the group's own quizzes can be assigned — members can't open
+  // anyone's personal ones.
   useEffect(() => {
-    if (isTeacher && group) {
-      api
-        .listQuizzes(group.id)
-        .then(setQuizzes)
-        .catch(() => setQuizzes([]));
-    }
-  }, [isTeacher, group]);
+    if (!isTeacher || !formOpen) return;
+    api
+      .listClassQuizzes(classId)
+      .then(setQuizzes)
+      .catch(() => setQuizzes([]));
+  }, [isTeacher, formOpen, classId]);
 
   async function createAssignment() {
     if (!title.trim()) {
@@ -59,13 +63,16 @@ export function ClassAssignments({
     try {
       await api.createAssignment(classId, {
         title: title.trim(),
-        dueAt: dueAt || null,
+        description: description.trim() || undefined,
+        dueAt: dueInputValue(dueDate, dueTime),
         quizId: quizId || undefined,
         file,
       });
       toast('Даалгавар нэмэгдлээ');
       setTitle('');
-      setDueAt('');
+      setDescription('');
+      setDueDate('');
+      setDueTime('');
       setQuizId(NO_QUIZ);
       setFile(null);
       setFormOpen(false);
@@ -104,7 +111,7 @@ export function ClassAssignments({
           }}
         />
       )}
-      {isTeacher && (
+      {isTeacher && !archived && (
         <Button
           variant={formOpen ? 'ghost' : 'primary'}
           onClick={() => setFormOpen((v) => !v)}
@@ -122,7 +129,7 @@ export function ClassAssignments({
         </Button>
       )}
 
-      {formOpen && (
+      {formOpen && !archived && (
         <Card className="mb-5 flex flex-col gap-3 rounded-lg">
           <Field label="Даалгаврын нэр*" className="mb-0">
             <TextInput
@@ -132,14 +139,36 @@ export function ClassAssignments({
               placeholder="ж: 3-р бүлгийн дасгал"
             />
           </Field>
+          <Field label="Заавар (заавал биш)" className="mb-0">
+            <textarea
+              value={description}
+              maxLength={MAX_DESCRIPTION}
+              rows={3}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="ж: 45-р хуудасны 1-10 дасгалыг хийгээд зургийг нь хавсаргаарай"
+              className="w-full resize-y rounded-sm border-2 border-line bg-transparent p-2.5 text-[15px] text-ink outline-none focus:border-violet"
+            />
+          </Field>
           <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
             <Field label="Хугацаа (заавал биш)" className="mb-0">
-              <input
-                type="date"
-                className="w-full rounded-sm border-2 border-line p-2.5"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  aria-label="Огноо"
+                  className={dateTimeInputClass}
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                />
+                <input
+                  type="time"
+                  aria-label="Цаг (заавал биш)"
+                  title="Цаг сонгохгүй бол тухайн өдрийн 23:59 хүртэл"
+                  className={cx(dateTimeInputClass, 'w-32 shrink-0')}
+                  value={dueTime}
+                  disabled={!dueDate}
+                  onChange={(e) => setDueTime(e.target.value)}
+                />
+              </div>
             </Field>
             <Field label="Quiz (заавал биш)" className="mb-0">
               <select
@@ -147,7 +176,9 @@ export function ClassAssignments({
                 value={quizId}
                 onChange={(e) => setQuizId(e.target.value)}
               >
-                <option value={NO_QUIZ}>Quiz сонгохгүй</option>
+                <option value={NO_QUIZ}>
+                  {quizzes.length === 0 ? 'Бүлэгт quiz алга' : 'Quiz сонгохгүй'}
+                </option>
                 {quizzes.map((q) => (
                   <option key={q.id} value={q.id}>
                     {q.title}
@@ -204,6 +235,11 @@ export function ClassAssignments({
                       {due.label}
                       {!a.quizId && ' · Quiz-гүй'}
                     </p>
+                    {a.description && (
+                      <p className="mt-1 line-clamp-2 whitespace-pre-line text-[13px] text-ink-soft">
+                        {a.description}
+                      </p>
+                    )}
                   </div>
                   {a.materialId && (
                     <AttachmentLink
@@ -290,7 +326,7 @@ export function ClassAssignments({
                 </div>
                 {openStudentAssignment === a.id && (
                   <div className="mt-4">
-                    <AssignmentTaker assignmentId={a.id} />
+                    <AssignmentTaker assignmentId={a.id} archived={archived} onSubmitted={onCreated} />
                   </div>
                 )}
               </Card>

@@ -3,13 +3,16 @@ import { and, count, desc, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { assignments, quizzes, submissions } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
-import { canAccessQuiz, getClassMembership } from '@/lib/access';
+import { archivedGuard, canAccessQuiz, getClassMembership } from '@/lib/access';
 import { toAssignment } from '@/lib/mappers';
 import { classStudentIds, notifyUsers } from '@/lib/notifications';
 import { fileHasValidSignature } from '@/lib/fileSignature';
-import { parseDueInput } from '@/lib/dueDate';
+import { formatDue, parseDueInput } from '@/lib/dueDate';
 import { insertMaterial, validateMaterialFile } from '@/lib/materials';
+import { optionalText } from '@/lib/text';
 import { isUuid } from '@/lib/uuid';
+
+const MAX_ASSIGNMENT_DESCRIPTION = 2000;
 
 type Params = { params: Promise<{ classId: string }> };
 
@@ -98,6 +101,8 @@ export async function POST(request: Request, { params }: Params) {
       { status: 403 },
     );
   }
+  const archived = archivedGuard(klass);
+  if (archived) return archived;
 
   const formData = await request.formData().catch(() => null);
   if (!formData) {
@@ -108,6 +113,13 @@ export async function POST(request: Request, { params }: Params) {
     typeof titleField === 'string' && titleField.trim()
       ? titleField.trim()
       : 'Даалгавар';
+  const description = optionalText(formData.get('description'));
+  if (description && description.length > MAX_ASSIGNMENT_DESCRIPTION) {
+    return NextResponse.json(
+      { error: `Заавар ${MAX_ASSIGNMENT_DESCRIPTION} тэмдэгтээс ихгүй байх ёстой.` },
+      { status: 400 },
+    );
+  }
   const dueAtField = formData.get('dueAt');
   const dueAt = parseDueInput(dueAtField);
   if (dueAt === undefined) {
@@ -177,13 +189,14 @@ export async function POST(request: Request, { params }: Params) {
       quizId,
       materialId,
       title,
+      description,
       dueAt,
     })
     .returning();
 
   await notifyUsers(await classStudentIds(classId), {
     title: `Шинэ даалгавар: ${title}`,
-    body: `${klass.name} ангид${dueAt ? ' — хугацаа: ' + dueAt.toLocaleDateString('mn-MN', { timeZone: 'Asia/Ulaanbaatar' }) : ''}`,
+    body: `${klass.name} ангид${dueAt ? ' — хугацаа: ' + formatDue(dueAt) : ''}`,
     href: `/classroom?classId=${classId}`,
   });
 

@@ -77,6 +77,7 @@ export const toClass = (
   teacherName,
   color: row.color,
   description: row.description,
+  archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
   createdAt: row.createdAt.toISOString(),
   memberCount: extra?.memberCount,
   canManage: extra?.canManage,
@@ -120,6 +121,7 @@ export const toAssignment = (
   quizId: row.quizId,
   materialId: row.materialId,
   title: row.title,
+  description: row.description,
   dueAt: row.dueAt ? row.dueAt.toISOString() : null,
   createdAt: row.createdAt.toISOString(),
   mySubmission: extra?.mySubmission,
@@ -136,5 +138,6 @@ export const toSubmission = (
   studentName,
   answers: row.answers,
   score: row.score,
+  materialId: row.materialId,
   submittedAt: row.submittedAt.toISOString(),
 });

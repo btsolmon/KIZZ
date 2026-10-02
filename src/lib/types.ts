@@ -45,6 +45,21 @@ export interface Question {
   explanation?: string;
 }
 
+/** A question as the API sends it. A group's members don't get the answer
+ * (`correctIndex`, `explanation`) until they may see it — see
+ * `Quiz.answersHidden`. */
+export type QuizQuestion = Omit<Question, 'correctIndex'> & { correctIndex?: number };
+
+/** One answer checked by the server (practice on a quiz whose answers are
+ * hidden). `correctIndex`/`explanation` are left out while an assignment
+ * the viewer can still hand in uses the quiz. */
+export interface QuizCheckResult {
+  questionId: string;
+  correct: boolean;
+  correctIndex?: number;
+  explanation?: string;
+}
+
 export interface Quiz {
   id: string;
   groupId: string | null;
@@ -56,7 +71,10 @@ export interface Quiz {
   isPublic: boolean;
   copyCount: number;
   title: string;
-  questions: Question[];
+  questions: QuizQuestion[];
+  /** The answers were left out for this viewer, so practice is checked on
+   * the server (POST /quizzes/:id/check). */
+  answersHidden?: boolean;
   generatedBy: 'ai' | 'rule-based';
   createdAt: string;
   /** Only on the response that created the quiz: XP granted for it. */
@@ -138,6 +156,10 @@ export interface Class {
   /** One of CLASS_COLORS' keys, see src/lib/classColor.ts. */
   color: string;
   description: string | null;
+  /** Set once an admin archives the group: it drops out of the main list
+   * and no new work (assignments, submissions, files, announcements) can be
+   * added. */
+  archivedAt: string | null;
   createdAt: string;
   /** Enrolled student count. Only populated by GET /classes/:id. */
   memberCount?: number;
@@ -204,6 +226,8 @@ export interface ClassPost {
   pinned: boolean;
   createdAt: string;
   author: PostAuthor;
+  /** A file shared with the announcement (it is also in the group's materials). */
+  attachment: { id: string; fileName: string; sizeBytes: number } | null;
   canDelete: boolean;
   comments: PostComment[];
 }
@@ -240,6 +264,8 @@ export interface Assignment {
   /** Null when no file was attached at creation. */
   materialId: string | null;
   title: string;
+  /** Instructions for members; null when the admin wrote none. */
+  description: string | null;
   dueAt: string | null;
   createdAt: string;
   /** Populated for students by the list endpoint, so a "Done" badge can
@@ -251,9 +277,12 @@ export interface Assignment {
 }
 
 export interface AssignmentDetail extends Assignment {
-  /** Null for a quiz-less assignment. */
+  /** Null for a quiz-less assignment. A member gets the answers only once
+   * their result is final (deadline passed, or the group archived). */
   quiz: Quiz | null;
   mySubmission?: Submission | null;
+  /** Per question, whether the caller's submitted answer was right. */
+  myCorrect?: boolean[] | null;
 }
 
 export interface Submission {
@@ -265,6 +294,8 @@ export interface Submission {
   /** Null until graded — always the case for a quiz-less assignment unless
    * the teacher enters a grade manually. */
   score: number | null;
+  /** The member's own attached file, if they added one. */
+  materialId: string | null;
   submittedAt: string;
   /** Submitted after the due date. Only set by the admin's list endpoint. */
   late?: boolean;

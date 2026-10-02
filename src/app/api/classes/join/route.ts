@@ -39,6 +39,12 @@ export async function POST(request: Request) {
     );
   }
   const { isMember } = await getClassMembership(klass.id, auth.user.id);
+  if (!isMember && klass.archivedAt) {
+    return NextResponse.json(
+      { error: 'Энэ бүлэг архивлагдсан тул нэгдэх боломжгүй.' },
+      { status: 409 },
+    );
+  }
   if (!isMember) {
     await db
       .insert(classMembers)

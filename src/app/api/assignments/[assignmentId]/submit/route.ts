@@ -1,16 +1,44 @@
 import { NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { assignments, quizzes, submissions } from '@/db/schema';
+import { assignments, classMaterials, quizzes, submissions } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
-import { getClassMembership } from '@/lib/access';
+import { archivedGuard, getClassMembership } from '@/lib/access';
 import { UNIQUE_VIOLATION, pgErrorCode } from '@/lib/dbErrors';
+import { fileHasValidSignature } from '@/lib/fileSignature';
+import { insertMaterial, validateMaterialFile } from '@/lib/materials';
 import { classTeacherIds, notifyUsers } from '@/lib/notifications';
 import { awardAssignmentCompletion } from '@/lib/points/awards';
+import { rateLimit } from '@/lib/rateLimit';
 import type { SubmitResult } from '@/lib/types';
 import { isUuid } from '@/lib/uuid';
 
 type Params = { params: Promise<{ assignmentId: string }> };
+
+/** The answers and optional file from either a JSON body (`{ answers }`) or
+ * multipart form data (`answers` as a JSON string, plus `file`). */
+async function readBody(
+  request: Request,
+): Promise<{ rawAnswers: unknown[]; file: File | null }> {
+  const type = request.headers.get('content-type') ?? '';
+  if (type.startsWith('multipart/form-data')) {
+    const form = await request.formData().catch(() => null);
+    let rawAnswers: unknown = [];
+    try {
+      rawAnswers = JSON.parse(String(form?.get('answers') ?? '[]'));
+    } catch {
+      rawAnswers = [];
+    }
+    const file = form?.get('file');
+    return {
+      rawAnswers: Array.isArray(rawAnswers) ? rawAnswers : [],
+      // An empty file input still shows up as a 0-byte File in some browsers.
+      file: file instanceof File && file.size > 0 ? file : null,
+    };
+  }
+  const body = await request.json().catch(() => null);
+  return { rawAnswers: Array.isArray(body?.answers) ? body.answers : [], file: null };
+}
 
 export async function POST(request: Request, { params }: Params) {
   const auth = await requireUser(request);
@@ -33,11 +61,11 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
-  const { isMember, isTeacher } = await getClassMembership(
+  const { klass, isMember, isTeacher } = await getClassMembership(
     assignment.classId,
     auth.user.id,
   );
-  if (!isMember) {
+  if (!klass || !isMember) {
     return NextResponse.json(
       { error: 'Даалгавар олдсонгүй.' },
       { status: 404 },
@@ -50,6 +78,10 @@ export async function POST(request: Request, { params }: Params) {
       { status: 403 },
     );
   }
+  const archived = archivedGuard(klass);
+  if (archived) return archived;
+
+  const { rawAnswers, file } = await readBody(request);
 
   // A quiz-less assignment has nothing to auto-score — "submitting" just
   // marks it turned in, with a null score until the teacher grades it
@@ -69,10 +101,8 @@ export async function POST(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Quiz олдсонгүй.' }, { status: 404 });
     }
 
-    const body = await request.json().catch(() => null);
-    const rawAnswers = Array.isArray(body?.answers) ? body.answers : [];
     answers = quiz.questions.map((_, i) =>
-      typeof rawAnswers[i] === 'number' ? rawAnswers[i] : null,
+      typeof rawAnswers[i] === 'number' ? (rawAnswers[i] as number) : null,
     );
     correctCount = quiz.questions.filter(
       (q, i) => answers[i] === q.correctIndex,
@@ -85,25 +115,54 @@ export async function POST(request: Request, { params }: Params) {
   let reward: SubmitResult['reward'] = undefined;
 
   const [existing] = await db
-    .select({ id: submissions.id })
+    .select({ id: submissions.id, materialId: submissions.materialId })
     .from(submissions)
     .where(
       and(eq(submissions.assignmentId, assignmentId), eq(submissions.studentId, auth.user.id)),
     )
     .limit(1);
 
-  if (existing) {
-    // Redoing it is fine until the deadline; after that the result is final.
-    if (assignment.dueAt && assignment.dueAt.getTime() < Date.now()) {
+  // Redoing it is fine until the deadline; after that the result is final.
+  if (existing && assignment.dueAt && assignment.dueAt.getTime() < Date.now()) {
+    return NextResponse.json(
+      { error: 'Хугацаа дууссан тул дахин илгээх боломжгүй.' },
+      { status: 409 },
+    );
+  }
+
+  // The member's own work, optional either way. A new file replaces the one
+  // sent before; without one, the earlier file stays.
+  let materialId = existing?.materialId ?? null;
+  if (file) {
+    const invalid = validateMaterialFile(file);
+    if (invalid) {
+      return NextResponse.json({ error: invalid.error }, { status: invalid.status });
+    }
+    if (!(await fileHasValidSignature(file))) {
       return NextResponse.json(
-        { error: 'Хугацаа дууссан тул дахин илгээх боломжгүй.' },
-        { status: 409 },
+        { error: 'Файлын агуулга төрөлтэйгээ таарахгүй байна.' },
+        { status: 415 },
       );
     }
+    const limited = rateLimit(`upload:${auth.user.id}`, 30, 10 * 60_000);
+    if (limited) return limited;
+    const material = await insertMaterial({
+      classId: assignment.classId,
+      uploadedBy: auth.user.id,
+      file,
+      isSubmission: true,
+    });
+    materialId = material.id;
+  }
+
+  if (existing) {
     await db
       .update(submissions)
-      .set({ answers, score, submittedAt: new Date() })
+      .set({ answers, score, materialId, submittedAt: new Date() })
       .where(eq(submissions.id, existing.id));
+    if (existing.materialId && existing.materialId !== materialId) {
+      await db.delete(classMaterials).where(eq(classMaterials.id, existing.materialId));
+    }
   } else {
     try {
       await db.insert(submissions).values({
@@ -111,8 +170,12 @@ export async function POST(request: Request, { params }: Params) {
         studentId: auth.user.id,
         answers,
         score,
+        materialId,
       });
     } catch (err) {
+      if (materialId) {
+        await db.delete(classMaterials).where(eq(classMaterials.id, materialId));
+      }
       if (pgErrorCode(err) === UNIQUE_VIOLATION) {
         return NextResponse.json(
           { error: 'Та энэ даалгаврыг өмнө нь илгээсэн байна.' },

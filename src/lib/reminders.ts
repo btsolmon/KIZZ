@@ -1,6 +1,7 @@
 import { and, gt, isNull, lte, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { assignments, classMembers, notifications, submissions } from '@/db/schema';
+import { formatDue } from '@/lib/dueDate';
+import { assignments, classMembers, classes, notifications, submissions } from '@/db/schema';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -24,6 +25,7 @@ export async function ensureDueReminders(userId: string): Promise<void> {
         classMembers,
         and(eq(classMembers.classId, assignments.classId), eq(classMembers.studentId, userId)),
       )
+      .innerJoin(classes, eq(classes.id, assignments.classId))
       .leftJoin(
         submissions,
         and(eq(submissions.assignmentId, assignments.id), eq(submissions.studentId, userId)),
@@ -33,6 +35,8 @@ export async function ensureDueReminders(userId: string): Promise<void> {
           gt(assignments.dueAt, now),
           lte(assignments.dueAt, new Date(now.getTime() + WINDOW_MS)),
           isNull(submissions.id),
+          // Nothing can be handed in once a group is archived.
+          isNull(classes.archivedAt),
         ),
       );
     if (due.length === 0) return;
@@ -43,13 +47,7 @@ export async function ensureDueReminders(userId: string): Promise<void> {
         due.map((a) => ({
           userId,
           title: `⏰ "${a.title}" даалгаврын хугацаа удахгүй дуусна`,
-          body: `Хугацаа: ${a.dueAt!.toLocaleString('mn-MN', {
-            timeZone: 'Asia/Ulaanbaatar',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}`,
+          body: `Хугацаа: ${formatDue(a.dueAt!)}`,
           href: `/classroom?classId=${a.classId}&tab=classwork`,
           dedupeKey: `due:${a.id}`,
         })),
