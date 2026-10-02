@@ -3,7 +3,9 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, RotateCcw, Shuffle } from 'lucide-react';
 import { Button } from './ui';
-import type { Question, Quiz } from '../lib/types';
+import { api } from '../lib/api';
+import { useToast } from '../lib/toast';
+import type { ApiError, Quiz, QuizCheckResult, QuizQuestion } from '../lib/types';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 const LETTER_BG = ['bg-answer-1', 'bg-answer-2', 'bg-answer-3', 'bg-answer-4'];
@@ -53,40 +55,69 @@ function shuffled<T>(items: T[]): T[] {
 /**
  * Solo practice for a quiz: answer on your own, check, see what you got wrong
  * with the explanations, then retry just the misses or reshuffle the lot.
- * Deliberately earns no coins or XP — the answers are yours to look up, so
- * rewards here could be farmed. Your best score is kept on this device.
+ * Deliberately earns no coins or XP — rewards here could be farmed. A group's
+ * members don't hold the answer key, so their answers are checked by the
+ * server, which keeps the correct ones back while an open assignment uses the
+ * quiz. Your best score is kept on this device.
  */
 export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void }) {
-  const [questions, setQuestions] = useState<Question[]>(quiz.questions);
+  const toast = useToast();
+  const [questions, setQuestions] = useState<QuizQuestion[]>(quiz.questions);
   const [answers, setAnswers] = useState<(number | null)[]>(() => quiz.questions.map(() => null));
-  const [submitted, setSubmitted] = useState(false);
+  // Keyed by question id; null until this round is checked.
+  const [results, setResults] = useState<Map<string, QuizCheckResult> | null>(null);
+  const [checking, setChecking] = useState(false);
   const [stats, setStats] = useState<PracticeStats | null>(null);
   const [round, setRound] = useState(1);
 
+  const submitted = results !== null;
   const fullRound = questions.length === quiz.questions.length;
-  const correct = useMemo(
-    () => questions.filter((q, i) => answers[i] === q.correctIndex).length,
-    [questions, answers],
-  );
   const wrong = useMemo(
-    () => questions.filter((q, i) => answers[i] !== q.correctIndex),
-    [questions, answers],
+    () => (results ? questions.filter((q) => !results.get(q.id)?.correct) : []),
+    [questions, results],
   );
+  const correct = questions.length - wrong.length;
   const percent = Math.round((correct / Math.max(1, questions.length)) * 100);
   const answered = answers.filter((a) => a !== null).length;
+  // Checked by the server but no answer key came back: an open assignment uses it.
+  const keyWithheld = !!results && [...results.values()].some((r) => r.correctIndex === undefined);
 
-  function start(next: Question[]) {
+  function start(next: QuizQuestion[]) {
     setQuestions(next);
     setAnswers(next.map(() => null));
-    setSubmitted(false);
+    setResults(null);
     setRound((r) => r + 1);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function check() {
-    setSubmitted(true);
+  async function check() {
+    const picks = questions.map((q, i) => ({ questionId: q.id, optionIndex: answers[i] }));
+    let list: QuizCheckResult[];
+    if (quiz.answersHidden) {
+      setChecking(true);
+      try {
+        list = (await api.checkQuiz(quiz.id, picks)).results;
+      } catch (err) {
+        toast((err as ApiError).payload?.error || 'Шалгахад алдаа гарлаа', 'error');
+        return;
+      } finally {
+        setChecking(false);
+      }
+    } else {
+      list = questions.map((q, i) => ({
+        questionId: q.id,
+        correct: answers[i] === q.correctIndex,
+        correctIndex: q.correctIndex,
+        explanation: q.explanation,
+      }));
+    }
+    const checked = new Map(list.map((r) => [r.questionId, r]));
+    setResults(checked);
     // Only a full pass counts towards your stats, not a retry of the misses.
-    if (fullRound) setStats(recordAttempt(quiz.id, percent));
+    if (fullRound) {
+      const right = questions.filter((q) => checked.get(q.id)?.correct).length;
+      setStats(recordAttempt(quiz.id, Math.round((right / Math.max(1, questions.length)) * 100)));
+    }
   }
 
   return (
@@ -109,6 +140,7 @@ export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void })
       <div className="flex flex-col gap-3" key={round}>
         {questions.map((q, qi) => {
           const picked = answers[qi];
+          const result = results?.get(q.id);
           return (
             <fieldset key={q.id} className="rounded-xl border border-line p-3">
               <legend className="px-1 text-sm font-semibold text-ink-soft">Асуулт {qi + 1}</legend>
@@ -116,8 +148,9 @@ export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void })
               <div className="flex flex-col gap-2">
                 {q.options.map((opt, oi) => {
                   const isPicked = picked === oi;
-                  const isAnswerKey = submitted && oi === q.correctIndex;
-                  const isWrongPick = submitted && isPicked && oi !== q.correctIndex;
+                  const isAnswerKey =
+                    submitted && (result?.correctIndex === oi || (isPicked && !!result?.correct));
+                  const isWrongPick = submitted && isPicked && !result?.correct;
                   return (
                     <label
                       key={oi}
@@ -150,9 +183,9 @@ export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void })
                   );
                 })}
               </div>
-              {submitted && q.explanation && (
+              {result?.explanation && (
                 <p className="mt-2 rounded-lg bg-ink/5 px-3 py-2 text-[13px] text-ink-soft">
-                  💡 {q.explanation}
+                  💡 {result.explanation}
                 </p>
               )}
             </fieldset>
@@ -169,6 +202,11 @@ export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void })
             {percent}% зөв ·{' '}
             {percent === 100 ? 'Төгс! 🎉' : percent >= 70 ? 'Сайн байна! 👍' : 'Дахин давтаад үзээрэй 💪'}
           </p>
+          {keyWithheld && (
+            <p className="mt-2 text-[13px] text-ink-soft">
+              Энэ quiz нээлттэй даалгаварт ашиглагдаж байгаа тул зөв хариултууд одоохондоо харагдахгүй.
+            </p>
+          )}
           {fullRound && stats && (
             <p className="mt-2 text-[13px] text-ink-soft">
               Хамгийн сайн дүн: <span className="font-bold text-ink">{stats.best}%</span> · Оролдлого:{' '}
@@ -192,8 +230,8 @@ export function QuizPlayer({ quiz, onBack }: { quiz: Quiz; onBack: () => void })
           <p className="text-[13px] text-ink-soft">
             {answered} / {answers.length} асуулт бөглөсөн
           </p>
-          <Button variant="primary" onClick={check} disabled={answered < answers.length}>
-            Шалгах
+          <Button variant="primary" onClick={check} disabled={answered < answers.length || checking}>
+            {checking ? 'Шалгаж байна...' : 'Шалгах'}
           </Button>
         </div>
       )}

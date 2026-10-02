@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import { cx } from '@/lib/cx';
+import { saveBlob } from '@/lib/download';
+import { gradesCsv, safeFileName } from '@/lib/gradesCsv';
 import { useToast } from '@/lib/toast';
 import type { ApiError, ClassGrades, GradeCell } from '@/lib/types';
 
@@ -37,8 +40,8 @@ function Cell({ cell }: { cell: GradeCell | null }) {
   );
 }
 
-/** Members × assignments in one table (admins only). */
-export function GradesMatrix({ classId }: { classId: string }) {
+/** Members × assignments in one table (admins only), downloadable as CSV. */
+export function GradesMatrix({ classId, groupName }: { classId: string; groupName: string }) {
   const toast = useToast();
   const [grades, setGrades] = useState<ClassGrades | null>(null);
 
@@ -60,47 +63,64 @@ export function GradesMatrix({ classId }: { classId: string }) {
     );
   }
 
+  function exportCsv() {
+    if (!grades) return;
+    const blob = new Blob([gradesCsv(grades)], { type: 'text/csv;charset=utf-8' });
+    saveBlob(blob, `${safeFileName(groupName)} - дүн.csv`);
+  }
+
   return (
-    <div className="mt-3 overflow-x-auto">
-      <table className="w-full min-w-max border-collapse text-[14px]">
-        <thead>
-          <tr>
-            <th className="sticky left-0 border-b-2 border-line bg-paper-raised px-3 py-2.5 text-left text-[13px] text-ink-soft">
-              Гишүүн
-            </th>
-            {grades.assignments.map((a) => (
-              <th
-                key={a.id}
-                title={a.title}
-                className="max-w-36 truncate border-b-2 border-line px-3 py-2.5 text-left text-[13px] text-ink-soft"
-              >
-                {a.title}
+    <>
+      <div className="mt-2 flex justify-end">
+        <button
+          type="button"
+          onClick={exportCsv}
+          className="inline-flex items-center gap-1.5 rounded-full border-2 border-line px-3 py-1 text-[12px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink"
+        >
+          <Download size={13} aria-hidden /> CSV татах
+        </button>
+      </div>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-max border-collapse text-[14px]">
+          <thead>
+            <tr>
+              <th className="sticky left-0 border-b-2 border-line bg-paper-raised px-3 py-2.5 text-left text-[13px] text-ink-soft">
+                Гишүүн
               </th>
-            ))}
-            <th className="border-b-2 border-line px-3 py-2.5 text-left text-[13px] text-ink-soft">
-              Дундаж
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {grades.students.map((s) => (
-            <tr key={s.id}>
-              <td className="sticky left-0 border-b border-line bg-paper-raised px-3 py-2.5 font-medium text-ink">
-                {s.name}
-              </td>
               {grades.assignments.map((a) => (
-                <td key={a.id} className="border-b border-line px-3 py-2.5">
-                  <Cell cell={s.cells[a.id]} />
-                </td>
+                <th
+                  key={a.id}
+                  title={a.title}
+                  className="max-w-36 truncate border-b-2 border-line px-3 py-2.5 text-left text-[13px] text-ink-soft"
+                >
+                  {a.title}
+                </th>
               ))}
-              <td className="border-b border-line px-3 py-2.5 font-bold text-ink">
-                {s.average === null ? '—' : `${s.average}%`}
-              </td>
+              <th className="border-b-2 border-line px-3 py-2.5 text-left text-[13px] text-ink-soft">
+                Дундаж
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="mt-2 text-[12px] text-ink-soft">✓ илгээсэн, дүн ороогүй · ⏱ хоцорсон · — илгээгээгүй</p>
-    </div>
+          </thead>
+          <tbody>
+            {grades.students.map((s) => (
+              <tr key={s.id}>
+                <td className="sticky left-0 border-b border-line bg-paper-raised px-3 py-2.5 font-medium text-ink">
+                  {s.name}
+                </td>
+                {grades.assignments.map((a) => (
+                  <td key={a.id} className="border-b border-line px-3 py-2.5">
+                    <Cell cell={s.cells[a.id]} />
+                  </td>
+                ))}
+                <td className="border-b border-line px-3 py-2.5 font-bold text-ink">
+                  {s.average === null ? '—' : `${s.average}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-2 text-[12px] text-ink-soft">✓ илгээсэн, дүн ороогүй · ⏱ хоцорсон · — илгээгээгүй</p>
+      </div>
+    </>
   );
 }

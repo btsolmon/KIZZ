@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from 'react';
 import { FileText, Image as ImageIcon, Loader2, UploadCloud, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import { saveBlob } from '@/lib/download';
 import { useToast } from '@/lib/toast';
 import { useConfirm } from '@/lib/confirm';
 import { formatSize } from '@/lib/text';
@@ -52,14 +53,7 @@ export function NoteAttachments({ noteId }: { noteId: string }) {
   async function download(item: NoteAttachment) {
     try {
       const { blob, fileName } = await api.downloadNoteAttachment(item.id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      saveBlob(blob, fileName);
     } catch {
       toast('Татахад алдаа гарлаа', 'error');
     }

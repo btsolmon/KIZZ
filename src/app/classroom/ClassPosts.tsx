@@ -3,15 +3,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { MessageCircle, Pin, PinOff, Trash2 } from 'lucide-react';
 import { Button, Card, SkeletonList } from '@/components/ui';
+import { AttachmentLink } from '@/components/AttachmentLink';
+import { FilePicker } from '@/components/FilePicker';
 import { api } from '@/lib/api';
 import { avatarSrcFor } from '@/lib/avatar';
 import { useConfirm } from '@/lib/confirm';
 import { cx } from '@/lib/cx';
+import { formatSize } from '@/lib/text';
 import { useToast } from '@/lib/toast';
 import type { ApiError, ClassPost, PostAuthor } from '@/lib/types';
 
 const MAX_POST = 2000;
 const MAX_COMMENT = 1000;
+// Unpinned announcements per page — POST_PAGE in src/lib/posts.ts.
+const PAGE = 20;
 
 function timeAgo(iso: string): string {
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -40,22 +45,28 @@ function Composer({
   submitLabel,
   onSubmit,
   compact = false,
+  allowFile = false,
 }: {
   placeholder: string;
   max: number;
   submitLabel: string;
-  onSubmit: (body: string) => Promise<void>;
+  onSubmit: (body: string, file: File | null) => Promise<void>;
   compact?: boolean;
+  /** Offer an optional file next to the text (a file alone is enough). */
+  allowFile?: boolean;
 }) {
   const [body, setBody] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const ready = !!body.trim() || !!file;
 
   async function submit() {
-    if (!body.trim()) return;
+    if (!ready) return;
     setBusy(true);
     try {
-      await onSubmit(body.trim());
+      await onSubmit(body.trim(), file);
       setBody('');
+      setFile(null);
     } finally {
       setBusy(false);
     }
@@ -75,12 +86,15 @@ function Composer({
         aria-label={placeholder}
         className="w-full resize-y rounded-lg border border-line bg-paper p-3 text-[15px] text-ink outline-none focus:border-violet focus:ring-2 focus:ring-violet/15"
       />
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-ink-soft">
-          {body.length} / {max}
-        </span>
-        <Button variant="primary" onClick={submit} disabled={busy || !body.trim()}>
-          {submitLabel}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
+          {allowFile && <FilePicker file={file} onChange={setFile} />}
+          <span className="text-xs text-ink-soft">
+            {body.length} / {max}
+          </span>
+        </div>
+        <Button variant="primary" onClick={submit} disabled={busy || !ready}>
+          {busy ? 'Илгээж байна...' : submitLabel}
         </Button>
       </div>
     </div>
@@ -101,14 +115,29 @@ export function ClassPosts({
   const confirm = useConfirm();
   const [posts, setPosts] = useState<ClassPost[] | null>(null);
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
+  // How many unpinned announcements to show; "load more" raises it. Every
+  // reload fetches that many, so pins, comments and deletes stay in sync.
+  const [limit, setLimit] = useState(PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setPosts(await api.listPosts(classId));
+      setPosts(await api.listPosts(classId, limit));
     } catch {
-      setPosts([]);
+      // Keep what is already shown; only a first load ends up empty.
+      setPosts((prev) => prev ?? []);
+    } finally {
+      setLoadingMore(false);
     }
-  }, [classId]);
+  }, [classId, limit]);
+
+  // A full page came back, so there may be older ones.
+  const hasMore = !!posts && posts.filter((p) => !p.pinned).length >= limit;
+
+  function loadMore() {
+    setLoadingMore(true);
+    setLimit((l) => l + PAGE); // the effect below fetches
+  }
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -147,9 +176,12 @@ export function ClassPosts({
             placeholder="Бүлгийнхээ гишүүдэд зарлал бичих..."
             max={MAX_POST}
             submitLabel="Нийтлэх"
-            onSubmit={async (body) => {
+            allowFile
+            onSubmit={async (body, file) => {
               try {
-                setPosts(await api.createPost(classId, body));
+                // The response is the first page again.
+                setPosts(await api.createPost(classId, body, file));
+                setLimit(PAGE);
               } catch (err) {
                 fail(err);
                 throw err;
@@ -212,9 +244,20 @@ export function ClassPosts({
                   </div>
                 </div>
 
-                <p className="mt-3 whitespace-pre-line break-words text-[15px] leading-relaxed text-ink">
-                  {post.body}
-                </p>
+                {post.body && (
+                  <p className="mt-3 whitespace-pre-line break-words text-[15px] leading-relaxed text-ink">
+                    {post.body}
+                  </p>
+                )}
+                {post.attachment && (
+                  <div className="mt-3">
+                    <AttachmentLink
+                      materialId={post.attachment.id}
+                      label={`${post.attachment.fileName} · ${formatSize(post.attachment.sizeBytes)}`}
+                      className="inline-flex max-w-full items-center gap-1.5 truncate rounded-full border-2 border-line px-3 py-1.5 text-[13px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink"
+                    />
+                  </div>
+                )}
 
                 <button
                   type="button"
@@ -274,6 +317,11 @@ export function ClassPosts({
               </Card>
             );
           })}
+          {hasMore && (
+            <Button variant="ghost" onClick={loadMore} disabled={loadingMore} className="self-center">
+              {loadingMore ? 'Ачаалж байна...' : 'Өмнөх зарлалууд'}
+            </Button>
+          )}
         </div>
       )}
     </section>

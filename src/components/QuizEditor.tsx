@@ -34,8 +34,9 @@ export function QuizEditor({
   const toast = useToast();
   const confirm = useConfirm();
   const [title, setTitle] = useState(quiz.title);
+  // Only managers edit, and they always get the answer key.
   const [questions, setQuestions] = useState<Question[]>(
-    quiz.questions.map((q) => ({ ...q, options: [...q.options] })),
+    quiz.questions.map((q) => ({ ...q, correctIndex: q.correctIndex ?? 0, options: [...q.options] })),
   );
   const [saving, setSaving] = useState(false);
   const [initial] = useState(() => JSON.stringify({ title: quiz.title, questions: quiz.questions }));

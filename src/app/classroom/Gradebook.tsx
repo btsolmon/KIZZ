@@ -1,11 +1,13 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
+import { BellRing } from 'lucide-react';
 import { AttachmentLink } from '@/components/AttachmentLink';
 import { api } from '@/lib/api';
+import { avatarSrcFor } from '@/lib/avatar';
 import { cx } from '@/lib/cx';
 import { useToast } from '@/lib/toast';
-import type { ApiError, Quiz, Submission } from '@/lib/types';
+import type { ApiError, ClassPeople, PersonSummary, Quiz, Submission } from '@/lib/types';
 import { QuizReview } from './QuizReview';
 
 function scoreClass(score: number) {
@@ -87,24 +89,99 @@ function SubmissionDetail({ submission, quiz }: { submission: Submission; quiz: 
         !quiz && <p className="text-[13px] text-ink-soft">Файл хавсаргаагүй.</p>
       )}
       {quiz && (
-        <QuizReview questions={quiz.questions} answers={submission.answers} reveal />
+        <QuizReview questions={quiz.questions} answers={submission.answers} />
       )}
     </div>
   );
 }
 
-export function Gradebook({ assignmentId }: { assignmentId: string }) {
+/** Members who haven't handed the assignment in, with a reminder button. */
+function MissingMembers({
+  assignmentId,
+  people,
+  archived,
+}: {
+  assignmentId: string;
+  people: PersonSummary[];
+  archived: boolean;
+}) {
+  const toast = useToast();
+  const [sending, setSending] = useState(false);
+
+  async function remind() {
+    setSending(true);
+    try {
+      const { reminded } = await api.remindAssignment(assignmentId);
+      toast(
+        reminded > 0
+          ? `${reminded} гишүүнд сануулга илгээлээ`
+          : 'Өнөөдөр аль хэдийн сануулсан байна',
+      );
+    } catch (err) {
+      toast((err as ApiError).payload?.error || 'Сануулга илгээж чадсангүй', 'error');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (people.length === 0) return null;
+  return (
+    <div className="mt-4 rounded-xl border border-line p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[13px] font-semibold text-ink-soft">Илгээгээгүй ({people.length})</p>
+        {!archived && (
+          <button
+            type="button"
+            onClick={remind}
+            disabled={sending}
+            title="Өнөөдөр нэг удаа сануулна"
+            className="inline-flex items-center gap-1.5 rounded-full border-2 border-line px-3 py-1 text-[12px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink disabled:opacity-50"
+          >
+            <BellRing size={13} aria-hidden /> Сануулах
+          </button>
+        )}
+      </div>
+      <ul className="mt-2 flex flex-wrap gap-2">
+        {people.map((p) => (
+          <li
+            key={p.id}
+            className="inline-flex items-center gap-1.5 rounded-full bg-paper py-1 pl-1 pr-3 text-[13px] text-ink"
+          >
+            <img src={avatarSrcFor(p)} alt="" className="h-6 w-6 rounded-full object-cover" />
+            {p.name}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function Gradebook({
+  assignmentId,
+  classId,
+  archived,
+}: {
+  assignmentId: string;
+  classId: string;
+  archived: boolean;
+}) {
   const toast = useToast();
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
+  const [people, setPeople] = useState<ClassPeople | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([api.listSubmissions(assignmentId), api.getAssignment(assignmentId)])
-      .then(([list, detail]) => {
+    Promise.all([
+      api.listSubmissions(assignmentId),
+      api.getAssignment(assignmentId),
+      api.getPeople(classId),
+    ])
+      .then(([list, detail, members]) => {
         setSubmissions(list);
         setQuiz(detail.quiz);
+        setPeople(members);
       })
       .catch((err: ApiError) => {
         toast(
@@ -112,13 +189,25 @@ export function Gradebook({ assignmentId }: { assignmentId: string }) {
           'error',
         );
       });
-  }, [assignmentId, toast]);
+  }, [assignmentId, classId, toast]);
 
-  if (submissions === null) return null;
+  if (submissions === null || people === null) return null;
+
+  const handedIn = new Set(submissions.map((s) => s.studentId));
+  const missing = (
+    <MissingMembers
+      assignmentId={assignmentId}
+      people={people.students.filter((p) => !handedIn.has(p.id))}
+      archived={archived}
+    />
+  );
 
   if (submissions.length === 0) {
     return (
-      <p className="mt-3.5 text-ink-soft">Хараахан хэн ч дуусгаагүй байна.</p>
+      <>
+        <p className="mt-3.5 text-ink-soft">Хараахан хэн ч илгээгээгүй байна.</p>
+        {missing}
+      </>
     );
   }
 
@@ -222,6 +311,7 @@ export function Gradebook({ assignmentId }: { assignmentId: string }) {
           </tbody>
         </table>
       </div>
+      {missing}
     </>
   );
 }

@@ -4,6 +4,7 @@ import { getDb } from '@/db/client';
 import { gamePlayers, gameSessions, quizzes } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
 import { canAccessQuiz } from '@/lib/access';
+import { answersVisibleTo, quizLockedFor } from '@/lib/quiz/answers';
 import { generateUniqueCode } from '@/lib/codes';
 import { pgErrorCode, UNIQUE_VIOLATION } from '@/lib/dbErrors';
 import { GAME_MAX_AGE_MS } from '@/lib/game';
@@ -61,6 +62,18 @@ export async function POST(request: Request) {
       }
       return NextResponse.json(toGameSession(open), { status: 200 });
     }
+  }
+
+  // A live game shows every answer once revealed, so while an assignment a
+  // member can still hand in uses this quiz, only an admin may start one.
+  if (
+    !(await answersVisibleTo(quiz, auth.user.id)) &&
+    (await quizLockedFor(quiz.id, auth.user.id))
+  ) {
+    return NextResponse.json(
+      { error: 'Энэ quiz нээлттэй даалгаварт ашиглагдаж байгаа тул хугацаа дуустал зөвхөн админ тоглоом эхлүүлнэ.' },
+      { status: 409 },
+    );
   }
 
   const code = await generateUniqueCode(async (candidate) => {

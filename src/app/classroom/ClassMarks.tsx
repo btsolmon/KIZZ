@@ -8,10 +8,14 @@ import type { Assignment } from '@/lib/types';
 
 export function ClassMarks({
   classId,
+  groupName,
+  archived,
   assignments,
   isTeacher,
 }: {
   classId: string;
+  groupName: string;
+  archived: boolean;
   assignments: Assignment[];
   isTeacher: boolean;
 }) {
@@ -34,7 +38,7 @@ export function ClassMarks({
         <div className="flex flex-col gap-3">
           <Card className="rounded-lg">
             <h3 className="text-base">Нэгдсэн хүснэгт</h3>
-            <GradesMatrix classId={classId} />
+            <GradesMatrix classId={classId} groupName={groupName} />
           </Card>
           <h3 className="mt-2 text-base">Даалгавар бүрээр</h3>
           {assignments.map((a) => (
@@ -55,7 +59,9 @@ export function ClassMarks({
                   {openGradebook === a.id ? 'Хаах' : 'Дүнгийн самбар'}
                 </Button>
               </div>
-              {openGradebook === a.id && <Gradebook assignmentId={a.id} />}
+              {openGradebook === a.id && (
+                <Gradebook assignmentId={a.id} classId={classId} archived={archived} />
+              )}
             </Card>
           ))}
         </div>

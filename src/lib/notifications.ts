@@ -42,14 +42,16 @@ export async function classStudentIds(classId: string): Promise<string[]> {
 
 export async function classTeacherIds(classId: string): Promise<string[]> {
   const db = getDb();
-  const [klass] = await db
-    .select({ teacherId: classes.teacherId })
-    .from(classes)
-    .where(eq(classes.id, classId))
-    .limit(1);
-  const co = await db
-    .select({ id: classCoTeachers.teacherId })
-    .from(classCoTeachers)
-    .where(eq(classCoTeachers.classId, classId));
+  const [[klass], co] = await Promise.all([
+    db
+      .select({ teacherId: classes.teacherId })
+      .from(classes)
+      .where(eq(classes.id, classId))
+      .limit(1),
+    db
+      .select({ id: classCoTeachers.teacherId })
+      .from(classCoTeachers)
+      .where(eq(classCoTeachers.classId, classId)),
+  ]);
   return [...(klass ? [klass.teacherId] : []), ...co.map((r) => r.id)];
 }

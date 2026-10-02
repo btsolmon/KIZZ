@@ -8,6 +8,7 @@ import { deleteAssignmentCascade } from '@/lib/deletion';
 import { formatDue, parseDueInput } from '@/lib/dueDate';
 import { classStudentIds, notifyUsers } from '@/lib/notifications';
 import { toAssignment, toQuiz, toSubmission } from '@/lib/mappers';
+import { quizLockedFor, withoutAnswers } from '@/lib/quiz/answers';
 import type { AssignmentDetail } from '@/lib/types';
 import { optionalText } from '@/lib/text';
 import { isUuid } from '@/lib/uuid';
@@ -75,10 +76,21 @@ export async function GET(request: Request, { params }: Params) {
     if (row) mySubmission = toSubmission(row, auth.user.name);
   }
 
+  // A member sees how each of their answers did, but the answer key only
+  // once nothing can be handed in with it any more.
+  let myCorrect: AssignmentDetail['myCorrect'] = null;
+  let quizView = quiz ? toQuiz(quiz) : null;
+  if (quiz && quizView && !isTeacher) {
+    const answers = mySubmission?.answers;
+    if (answers) myCorrect = quiz.questions.map((q, i) => answers[i] === q.correctIndex);
+    if (await quizLockedFor(quiz.id, auth.user.id)) quizView = withoutAnswers(quizView);
+  }
+
   const detail: AssignmentDetail = {
     ...toAssignment(assignment),
-    quiz: quiz ? toQuiz(quiz) : null,
+    quiz: quizView,
     mySubmission,
+    myCorrect,
   };
   return NextResponse.json(detail);
 }

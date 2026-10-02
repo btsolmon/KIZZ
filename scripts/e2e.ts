@@ -157,6 +157,35 @@ r = await call(tokB, 'GET', '/notifications'); check('member notified of deadlin
 r = await call(tokA, 'GET', `/classes/${klass?.id}/grades`); check('admin gets grade matrix', r.status === 200 && r.data?.students?.length === 1 && r.data?.students?.[0]?.cells?.[asg?.id]?.score === 95 && r.data?.students?.[0]?.average === 95, r.data);
 r = await call(tokB, 'GET', `/classes/${klass?.id}/grades`); check('member cannot see grade matrix (403)', r.status === 403, r);
 
+// --- the answer key stays with the admins while an assignment is open
+const hasKey = (q: any) => !!q?.questions?.length && q.questions.every((x: any) => typeof x.correctIndex === 'number');
+const noKey = (q: any) => q?.answersHidden === true && !!q?.questions?.length && q.questions.every((x: any) => x.correctIndex === undefined && x.explanation === undefined);
+const picksFor = (q: any, pick: (x: any) => number) => ({ answers: q.questions.map((x: any) => ({ questionId: x.id, optionIndex: pick(x) })) });
+r = await call(tokB, 'GET', `/classes/${klass?.id}/quizzes`); check('members get group quizzes without the answer key', noKey(r.data?.find((q: any) => q.id === gq?.id)), r.data);
+r = await call(tokA, 'GET', `/classes/${klass?.id}/quizzes`); check('admins get the answer key', hasKey(r.data?.find((q: any) => q.id === gq?.id)), r.data);
+r = await call(tokB, 'GET', `/quizzes/${gq?.id}`); check('a single group quiz hides it too', noKey(r.data), r.data);
+r = await call(tokB, 'GET', '/me/quizzes'); check("so does the member's quiz list", noKey(r.data?.find((q: any) => q.id === gq?.id)), r.data);
+r = await call(tokA, 'GET', '/me/quizzes'); check('the owner keeps the key of a personal quiz', hasKey(r.data?.find((q: any) => q.id === quiz?.id)), r.data);
+r = await call(tokB, 'GET', `/assignments/${asg?.id}`); check('an open assignment hides the key but marks each answer', noKey(r.data?.quiz) && r.data?.myCorrect?.length === 3 && r.data.myCorrect.every(Boolean), r.data);
+r = await call(tokB, 'POST', `/quizzes/${gq?.id}/check`, picksFor(gq, (x) => x.correctIndex));
+check('practice on an assigned quiz says what was right, not the answers', r.status === 200 && r.data?.results?.length === 3 && r.data.results.every((x: any) => x.correct && x.correctIndex === undefined), r.data);
+r = await call(tokA, 'POST', `/quizzes/${gq?.id}/check`, picksFor(gq, () => 0)); check('admins get the answers when checking', r.data?.results?.every((x: any) => typeof x.correctIndex === 'number'), r.data);
+check('an empty check is rejected (400)', (await call(tokB, 'POST', `/quizzes/${gq?.id}/check`, { answers: [] })).status === 400);
+check('non-members cannot check (404)', (await call(tokC, 'POST', `/quizzes/${gq?.id}/check`, picksFor(gq, () => 0))).status === 404);
+r = await call(tokB, 'POST', '/games', { quizId: gq?.id }); check('a member cannot start a game on an assigned quiz (409)', r.status === 409, r);
+r = await call(tokA, 'POST', '/games', { quizId: gq?.id }); const adminLobby = r.data; check('an admin can', r.status === 201, r);
+r = await call(tokB, 'POST', '/games', { quizId: gq?.id }); check('and members join that lobby', r.status === 200 && r.data?.id === adminLobby?.id, r);
+await call(tokA, 'POST', `/games/${adminLobby?.id}/end`);
+const freeQuiz = await seedQuiz({ classId: klass?.id, noteId: sn?.id });
+r = await call(tokB, 'POST', `/quizzes/${freeQuiz.id}/check`, picksFor(freeQuiz, () => 0)); check('practice on an unassigned quiz shows the answers', r.data?.results?.every((x: any) => typeof x.correctIndex === 'number'), r.data);
+const fpq = new FormData(); fpq.append('title', 'Past quiz'); fpq.append('quizId', freeQuiz.id); fpq.append('dueAt', '2020-01-01');
+const pastQuiz = (await call(tokA, 'POST', `/classes/${klass?.id}/assignments`, undefined, fpq)).data;
+r = await call(tokB, 'GET', `/assignments/${pastQuiz?.id}`); check('past due but not handed in: still no key (a late submission is possible)', noKey(r.data?.quiz), r.data);
+r = await call(tokB, 'POST', `/quizzes/${freeQuiz.id}/check`, picksFor(freeQuiz, () => 0)); check('practice keeps the answers back then too', r.data?.results?.every((x: any) => x.correctIndex === undefined), r.data);
+r = await call(tokB, 'POST', `/assignments/${pastQuiz?.id}/submit`, { answers: [0, 0, 0] }); check('late quiz submission', r.status === 201, r);
+r = await call(tokB, 'GET', `/assignments/${pastQuiz?.id}`); check('handed in after the deadline: the key is shown', hasKey(r.data?.quiz) && !r.data?.quiz?.answersHidden && r.data?.myCorrect?.join() === 'true,false,false', r.data);
+await call(tokA, 'DELETE', `/assignments/${pastQuiz?.id}`);
+
 const past = new FormData(); past.append('title', 'Late one'); past.append('dueAt', '2020-01-01');
 r = await call(tokA, 'POST', `/classes/${klass?.id}/assignments`, undefined, past); check('create assignment already past due', r.status === 201, r); const pastAsg = r.data;
 r = await call(tokB, 'POST', `/assignments/${pastAsg?.id}/submit`); check('late first submission still accepted', r.status === 201, r);
@@ -202,6 +231,10 @@ r = await call(tokA, 'GET', `/assignments/${essay?.id}/submissions`); const work
 check('new file replaces the old one', !!work2 && work2 !== work1 && (await call(tokB, 'GET', `/materials/${work1}`)).status === 404, { work1, work2 });
 r = await call(tokB, 'POST', `/assignments/${essay?.id}/submit`); check('resubmit without a file', r.status === 200, r);
 r = await call(tokA, 'GET', `/assignments/${essay?.id}/submissions`); check('and the earlier file is kept', r.data?.[0]?.materialId === work2, r.data);
+check('members cannot send reminders (403)', (await call(tokB, 'POST', `/assignments/${essay?.id}/remind`)).status === 403);
+r = await call(tokA, 'POST', `/assignments/${essay?.id}/remind`); check('admin reminds whoever has not handed in', r.status === 200 && r.data?.reminded === 1 && r.data?.missing === 1, r.data);
+r = await call(tokA, 'POST', `/assignments/${essay?.id}/remind`); check('a second reminder the same day sends nothing', r.data?.reminded === 0 && r.data?.missing === 1, r.data);
+r = await call(tokC, 'GET', '/notifications'); check('the member got one reminder', r.data?.items?.filter((n: any) => /даалгавраа илгээгээрэй/.test(n.title)).length === 1, r.data?.items?.map((n: any) => n.title));
 const fq = new FormData(); fq.append('title', 'Form quiz'); fq.append('quizId', gq?.id);
 const formQuiz = (await call(tokA, 'POST', `/classes/${klass?.id}/assignments`, undefined, fq)).data;
 const fqa = new FormData(); fqa.append('answers', JSON.stringify(gq?.questions.map((q: any) => q.correctIndex)));
@@ -531,6 +564,15 @@ r = await call(tokA, 'DELETE', `/comments/${memberComment.id}`); check("admin de
 r = await call(tokB, 'DELETE', `/posts/${firstPost?.id}`); check('members cannot delete announcements (403)', r.status === 403, r);
 r = await call(tokA, 'DELETE', `/posts/${secondPost?.id}`); check('admin deletes an announcement', r.status === 200, r);
 r = await call(tokA, 'GET', `/classes/${klass?.id}/posts`); check('deleted announcement is gone, the other remains with its comment', r.data.length === 1 && r.data[0].id === firstPost?.id && r.data[0].comments.length === 1, r.data);
+const fpost = new FormData(); fpost.append('body', ''); fpost.append('file', txt('slides.txt', 'slides'));
+r = await call(tokA, 'POST', `/classes/${klass?.id}/posts`, undefined, fpost); const withFile = r.data?.find?.((p: any) => p.attachment);
+check('an announcement can be just a file', r.status === 201 && withFile?.attachment?.fileName === 'slides.txt' && withFile?.body === '', r.data);
+check('members can download it', (await call(tokB, 'GET', `/materials/${withFile?.attachment?.id}`)).status === 200);
+r = await call(tokB, 'GET', `/classes/${klass?.id}/materials`); check('and it is in the group materials', r.data?.some((m: any) => m.id === withFile?.attachment?.id), r.data);
+r = await call(tokB, 'GET', `/classes/${klass?.id}/posts?limit=1`); check('paging: every pinned one plus the newest of the rest', r.data?.length === 2 && r.data[0].pinned === true && r.data[1].id === withFile?.id, r.data?.map((p: any) => p.id));
+await call(tokA, 'DELETE', `/materials/${withFile?.attachment?.id}`);
+r = await call(tokB, 'GET', `/classes/${klass?.id}/posts`); check('deleting the file leaves the announcement without it', r.data?.find((p: any) => p.id === withFile?.id)?.attachment === null, r.data);
+await call(tokA, 'DELETE', `/posts/${withFile?.id}`);
 
 // --- deletion / leave / robustness
 r = await call(tokA, 'GET', '/notes/not-a-uuid'); check('malformed id -> 404 (not 500)', r.status === 404, r.status);

@@ -9,9 +9,11 @@ import {
 } from '@/db/schema';
 import { requireUser } from '@/lib/auth/requireUser';
 import { toQuiz } from '@/lib/mappers';
+import { withoutAnswers } from '@/lib/quiz/answers';
 
 /** Every quiz the caller can use: their personal quizzes plus those of any
- * class they own, co-teach, or belong to. */
+ * class they own, co-teach, or belong to. Quizzes of a class they only
+ * belong to come without the answer key. */
 export async function GET(request: Request) {
   const auth = await requireUser(request);
   if (auth.error) return auth.error;
@@ -30,6 +32,7 @@ export async function GET(request: Request) {
       .where(eq(classMembers.studentId, userId)),
   ]);
   const classIds = [...owned, ...coTaught, ...joined].map((r) => r.id);
+  const adminOf = new Set([...owned, ...coTaught].map((r) => r.id));
 
   const rows = await db
     .select()
@@ -41,5 +44,9 @@ export async function GET(request: Request) {
     )
     .orderBy(desc(quizzes.createdAt));
 
-  return NextResponse.json(rows.map(toQuiz));
+  return NextResponse.json(
+    rows.map((row) =>
+      row.classId && !adminOf.has(row.classId) ? withoutAnswers(toQuiz(row)) : toQuiz(row),
+    ),
+  );
 }

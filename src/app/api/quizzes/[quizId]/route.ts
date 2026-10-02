@@ -7,6 +7,7 @@ import { canAccessQuiz, getClassMembership } from '@/lib/access';
 import { deleteGamesForQuizzes } from '@/lib/deletion';
 import { GAME_MAX_AGE_MS } from '@/lib/game';
 import { toQuiz } from '@/lib/mappers';
+import { answersVisibleTo, withoutAnswers } from '@/lib/quiz/answers';
 import { parseQuestions, parseTitle } from '@/lib/quiz/validate';
 import { isUuid } from '@/lib/uuid';
 
@@ -29,7 +30,8 @@ export async function GET(request: Request, { params }: Params) {
     return NextResponse.json({ error: 'Quiz олдсонгүй.' }, { status: 404 });
   }
 
-  return NextResponse.json(toQuiz(quiz));
+  const visible = await answersVisibleTo(quiz, auth.user.id);
+  return NextResponse.json(visible ? toQuiz(quiz) : withoutAnswers(toQuiz(quiz)));
 }
 
 /** Personal quizzes: the owner. Class quizzes: a class admin. A quiz that an

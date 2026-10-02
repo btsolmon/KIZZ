@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import {
   classCoTeachers,
@@ -42,49 +42,30 @@ export interface ClassMembership {
 /** Loads a class and resolves whether `userId` may see it — as the primary
  * teacher, as a co-teacher who joined by code (full teacher permissions
  * everywhere this gates on `isTeacher`), or as a student who joined by
- * code. */
+ * code. One round trip: nearly every group request starts here. */
 export async function getClassMembership(
   classId: string,
   userId: string,
 ): Promise<ClassMembership> {
-  const db = getDb();
-  const [klass] = await db
-    .select()
+  const [row] = await getDb()
+    .select({
+      klass: classes,
+      isCoTeacher: sql<boolean>`exists (
+        select 1 from ${classCoTeachers}
+        where ${classCoTeachers.classId} = ${classes.id} and ${classCoTeachers.teacherId} = ${userId}
+      )`,
+      isStudent: sql<boolean>`exists (
+        select 1 from ${classMembers}
+        where ${classMembers.classId} = ${classes.id} and ${classMembers.studentId} = ${userId}
+      )`,
+    })
     .from(classes)
     .where(eq(classes.id, classId))
     .limit(1);
 
-  if (!klass) return { klass: null, isTeacher: false, isMember: false };
-  if (klass.teacherId === userId) {
-    return { klass, isTeacher: true, isMember: true };
-  }
-
-  const [coTeaching] = await db
-    .select({ classId: classCoTeachers.classId })
-    .from(classCoTeachers)
-    .where(
-      and(
-        eq(classCoTeachers.classId, classId),
-        eq(classCoTeachers.teacherId, userId),
-      ),
-    )
-    .limit(1);
-  if (coTeaching) {
-    return { klass, isTeacher: true, isMember: true };
-  }
-
-  const [membership] = await db
-    .select({ classId: classMembers.classId })
-    .from(classMembers)
-    .where(
-      and(
-        eq(classMembers.classId, classId),
-        eq(classMembers.studentId, userId),
-      ),
-    )
-    .limit(1);
-
-  return { klass, isTeacher: false, isMember: !!membership };
+  if (!row) return { klass: null, isTeacher: false, isMember: false };
+  const isTeacher = row.klass.teacherId === userId || row.isCoTeacher;
+  return { klass: row.klass, isTeacher, isMember: isTeacher || row.isStudent };
 }
 
 /** A note or quiz is personal (owned by one user), or belongs to a study

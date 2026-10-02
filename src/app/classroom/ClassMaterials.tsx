@@ -13,14 +13,12 @@ import {
 } from 'lucide-react';
 import { EmptyState, SkeletonList } from '@/components/ui';
 import { downloadMaterial } from '@/components/AttachmentLink';
+import { MATERIAL_ACCEPT } from '@/components/FilePicker';
 import { api } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { formatSize } from '@/lib/text';
 import { useToast } from '@/lib/toast';
 import type { ApiError, Material } from '@/lib/types';
-
-// Mirrors ALLOWED_MATERIAL_TYPES in src/lib/materials.ts.
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip';
 
 function FileIcon({ mimeType }: { mimeType: string }) {
   const props = { size: 18, className: 'shrink-0', 'aria-hidden': true } as const;
@@ -125,7 +123,7 @@ export function ClassMaterials({
           <input
             id={inputId}
             type="file"
-            accept={ACCEPT}
+            accept={MATERIAL_ACCEPT}
             multiple
             disabled={uploading}
             className="sr-only"

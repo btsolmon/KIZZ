@@ -191,7 +191,13 @@ export default function ClassDetail({
         {activeTab === 'people' && <People classId={classId} canManage={isTeacher} isOwner={isOwner} />}
 
         {activeTab === 'marks' && (
-          <ClassMarks classId={classId} assignments={assignments} isTeacher={isTeacher} />
+          <ClassMarks
+            classId={classId}
+            groupName={klass.name}
+            archived={archived}
+            assignments={assignments}
+            isTeacher={isTeacher}
+          />
         )}
       </div>
 

@@ -1,68 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useId, useState } from 'react';
-import { Paperclip, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
 import { AttachmentLink } from '@/components/AttachmentLink';
+import { FilePicker } from '@/components/FilePicker';
 import { api } from '@/lib/api';
 import { useToast } from '@/lib/toast';
 import { dueInfo } from '@/lib/dueDate';
 import { refreshNotifications } from '@/lib/events';
-import { formatSize } from '@/lib/text';
 import type { ApiError, AssignmentDetail, SubmitResult } from '@/lib/types';
 import { QuizReview } from './QuizReview';
-
-// Mirrors ALLOWED_MATERIAL_TYPES in src/lib/materials.ts.
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip';
-
-/** Optional file a member hands in with their work. */
-function WorkFilePicker({
-  file,
-  onChange,
-  hasEarlier,
-}: {
-  file: File | null;
-  onChange: (file: File | null) => void;
-  hasEarlier: boolean;
-}) {
-  const inputId = useId();
-  if (file) {
-    return (
-      <div className="flex items-center gap-2.5 self-start rounded-xl border border-line px-3 py-2">
-        <Paperclip size={15} className="shrink-0 text-ink-soft" aria-hidden />
-        <span className="min-w-0 truncate text-sm font-medium text-ink">{file.name}</span>
-        <span className="shrink-0 text-xs text-ink-soft">{formatSize(file.size)}</span>
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          aria-label="Файлыг хасах"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-soft hover:bg-ink/5"
-        >
-          <X size={14} />
-        </button>
-      </div>
-    );
-  }
-  return (
-    <label
-      htmlFor={inputId}
-      className="inline-flex cursor-pointer items-center gap-1.5 self-start rounded-full border-2 border-line px-3.5 py-1.5 text-[13px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink"
-    >
-      <Paperclip size={14} aria-hidden />
-      {hasEarlier ? 'Өөр файл хавсаргах' : 'Файл хавсаргах (заавал биш)'}
-      <input
-        id={inputId}
-        type="file"
-        accept={ACCEPT}
-        className="sr-only"
-        onChange={(e) => {
-          onChange(e.target.files?.[0] ?? null);
-          e.target.value = '';
-        }}
-      />
-    </label>
-  );
-}
 
 export function AssignmentTaker({
   assignmentId,
@@ -99,8 +46,6 @@ export function AssignmentTaker({
 
   const { overdue } = dueInfo(assignment.dueAt);
   const submission = assignment.mySubmission;
-  // Once nothing can be resubmitted the correct answers are safe to show.
-  const final = overdue || archived;
 
   const instructions = (
     <>
@@ -166,13 +111,15 @@ export function AssignmentTaker({
               <QuizReview
                 questions={assignment.quiz.questions}
                 answers={submission.answers}
-                reveal={final}
+                correct={assignment.myCorrect}
               />
-              {!final && (
+              {assignment.quiz.answersHidden && (
                 <p className="mt-2 text-[13px] text-ink-soft">
-                  {assignment.dueAt
-                    ? 'Зөв хариултууд хугацаа дууссаны дараа харагдана. Түүнээс өмнө алдсан асуултаа засаад дахин илгээж болно.'
-                    : 'Алдсан асуултаа засаад дахин илгээж болно.'}
+                  {overdue
+                    ? 'Энэ quiz өөр нээлттэй даалгаварт ашиглагдаж байгаа тул зөв хариултууд одоохондоо харагдахгүй.'
+                    : assignment.dueAt
+                      ? 'Зөв хариултууд хугацаа дууссаны дараа харагдана. Түүнээс өмнө алдсан асуултаа засаад дахин илгээж болно.'
+                      : 'Алдсан асуултаа засаад дахин илгээж болно.'}
                 </p>
               )}
             </div>
@@ -219,7 +166,11 @@ export function AssignmentTaker({
   }
 
   const filePicker = (
-    <WorkFilePicker file={file} onChange={setFile} hasEarlier={!!submission?.materialId} />
+    <FilePicker
+      file={file}
+      onChange={setFile}
+      label={submission?.materialId ? 'Өөр файл хавсаргах' : 'Файл хавсаргах (заавал биш)'}
+    />
   );
 
   if (!assignment.quiz) {

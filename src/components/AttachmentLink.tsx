@@ -2,6 +2,7 @@
 
 import { Paperclip } from 'lucide-react';
 import { api } from '@/lib/api';
+import { saveBlob } from '@/lib/download';
 import { useToast } from '@/lib/toast';
 
 /** Downloads a class material by id. Auth here is a bearer token rather
@@ -9,14 +10,7 @@ import { useToast } from '@/lib/toast';
  * Blob and trigger a synthetic download. */
 export async function downloadMaterial(materialId: string) {
   const { blob, fileName } = await api.downloadMaterial(materialId);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  saveBlob(blob, fileName);
 }
 
 /** Download button for a class material — used wherever an assignment or a

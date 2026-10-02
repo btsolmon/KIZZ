@@ -24,6 +24,7 @@ import type {
   PurchaseResult,
   Question,
   Quiz,
+  QuizCheckResult,
   ShopItem,
   StreakStatus,
   Submission,
@@ -183,9 +184,11 @@ export const api = {
       `/library?sort=${sort}${q ? `&q=${encodeURIComponent(q)}` : ''}`,
     ),
   copyLibraryQuiz: (quizId: string) => request<Quiz>('POST', `/library/${quizId}/copy`),
-  listPosts: (classId: string) => request<ClassPost[]>('GET', `/classes/${classId}/posts`),
-  createPost: (classId: string, body: string) =>
-    request<ClassPost[]>('POST', `/classes/${classId}/posts`, { body }),
+  /** Pinned announcements plus the `limit` newest others. */
+  listPosts: (classId: string, limit: number) =>
+    request<ClassPost[]>('GET', `/classes/${classId}/posts?limit=${limit}`),
+  createPost: (classId: string, body: string, file?: File | null) =>
+    postForm<ClassPost[]>(`/classes/${classId}/posts`, { body }, file),
   pinPost: (postId: string, pinned: boolean) =>
     request('PATCH', `/posts/${postId}`, { pinned }),
   deletePost: (postId: string) => request('DELETE', `/posts/${postId}`),
@@ -193,6 +196,9 @@ export const api = {
     request('POST', `/posts/${postId}/comments`, { body }),
   deleteComment: (commentId: string) => request('DELETE', `/comments/${commentId}`),
   getQuiz: (quizId: string) => request<Quiz>('GET', `/quizzes/${quizId}`),
+  /** Practice on a quiz whose answers are hidden from the caller. */
+  checkQuiz: (quizId: string, answers: { questionId: string; optionIndex: number | null }[]) =>
+    request<{ results: QuizCheckResult[] }>('POST', `/quizzes/${quizId}/check`, { answers }),
 
   // live game — polling-based (no WebSocket/pub-sub service is configured
   // anywhere in this repo). Poll getGameState every ~1.5s while on the play
@@ -321,6 +327,9 @@ export const api = {
     ),
   listSubmissions: (assignmentId: string) =>
     request<Submission[]>('GET', `/assignments/${assignmentId}/submissions`),
+  /** Nudges members who haven't handed it in (once a day per member). */
+  remindAssignment: (assignmentId: string) =>
+    request<{ reminded: number; missing: number }>('POST', `/assignments/${assignmentId}/remind`),
   gradeSubmission: (submissionId: string, score: number) =>
     request<Submission>('PATCH', `/submissions/${submissionId}`, { score }),
 
